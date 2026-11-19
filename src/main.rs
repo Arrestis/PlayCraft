@@ -12,6 +12,7 @@ mod discs;
 mod icon_mask;
 mod icons;
 mod library;
+mod log;
 mod mpv;
 mod nav;
 mod sysvol;
@@ -48,6 +49,10 @@ fn main() -> eframe::Result<()> {
     }
 
     library::migrate_old_data();
+    log::init();
+    if let Some(p) = &screenshot {
+        log::info(format!("Screenshot mode: saving the window to {}", p.display()));
+    }
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("PlayCraft")

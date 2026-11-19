@@ -630,14 +630,14 @@ fn remote(app: &mut App, ctx: &egui::Context) {
             // Dragging the window's edge resizes the whole remote.
             let inner = vctx.input(|i| i.viewport().inner_rect);
             if let Some(r) = inner {
-                if !app.remote_size_cmd {
+                if app.remote_size_cmd == 0 && app.remote_resize_to.is_none() {
                     let s = ((r.width() - REMOTE_PAD) / remote_base_w(app.settings.remote_mini)).clamp(0.5, 2.5);
                     if (s - app.settings.remote_scale).abs() > 0.02 {
                         app.settings.remote_scale = s;
                     }
                 }
             }
-            app.remote_size_cmd = false;
+            app.remote_size_cmd = app.remote_size_cmd.saturating_sub(1);
             egui::CentralPanel::default().frame(remote_frame(false)).show(ui, |ui| remote_ui(app, ui));
             // Fit the window's height to the remote.
             if let (Some(r), Some(c)) = (inner, app.remote_content) {
@@ -651,7 +651,7 @@ fn remote(app: &mut App, ctx: &egui::Context) {
                 let w = remote_base_w(app.settings.remote_mini) * s + REMOTE_PAD;
                 let h = app.remote_content.map(|c| c.y + 24.0).unwrap_or(500.0);
                 vctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(w, h)));
-                app.remote_size_cmd = true;
+                app.remote_size_cmd = 15;
             }
         });
     } else {
@@ -1038,22 +1038,29 @@ fn remote_ui(app: &mut App, ui: &mut Ui) {
         if dr.on_hover_text("Volume down").clicked() {
             act = Some(RemoteAct::VolDown);
         }
-        // Which volume the remote controls.
-        ui.add_space(8.0 * s);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Volume keys:").size(11.0 * s.max(0.8)).color(TEXT_DIM));
-            if ui.selectable_label(app.settings.remote_pc_volume, RichText::new("Computer").size(11.0 * s.max(0.8))).on_hover_text("Change the computer's own volume and mute").clicked() {
-                app.settings.remote_pc_volume = true;
-                app.settings.save();
+        // Which volume the remote controls: two small keys under AUDIO.
+        // C = the computer's own volume, P = PlayCraft only. The lit one is in use.
+        let slot = Rect::from_min_size(block.min + vec2(2.0 * (colw + gap), kh + gap), vec2(colw, kh));
+        let half = (colw - gap * 0.5) / 2.0;
+        let c_key = Rect::from_min_size(slot.min, vec2(half, kh));
+        let p_key = Rect::from_min_size(slot.min + vec2(half + gap * 0.5, 0.0), vec2(half, kh));
+        for (id, rect, label, pc, tip) in [
+            ("vol_c", c_key, "C", true, "C: volume keys change the computer's own volume and mute"),
+            ("vol_p", p_key, "P", false, "P: volume keys change only PlayCraft's volume"),
+        ] {
+            let resp = key_rect(ui, id, rect, 5.0 * s, true);
+            let chosen = app.settings.remote_pc_volume == pc;
+            if chosen {
+                ui.painter().rect_stroke(rect.shrink(1.0), 5.0 * s, Stroke::new(2.0 * s.max(0.7), ACCENT), egui::StrokeKind::Inside);
             }
-            if ui.selectable_label(!app.settings.remote_pc_volume, RichText::new("PlayCraft").size(11.0 * s.max(0.8))).on_hover_text("Change only PlayCraft's volume").clicked() {
-                app.settings.remote_pc_volume = false;
+            ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(14.0 * s), if chosen { ACCENT_HOVER } else { KEY_TEXT });
+            if resp.on_hover_text(tip).clicked() && !chosen {
+                app.settings.remote_pc_volume = pc;
                 app.settings.save();
+                crate::log::info(if pc { "Remote volume keys now control the computer volume" } else { "Remote volume keys now control PlayCraft volume" });
             }
-        });
-        if !on {
-            ui.label(RichText::new("Menu keys work while a DVD or Blu-ray plays with its menus.").size(11.0 * s.max(0.8)).color(TEXT_DIM));
         }
+        let _ = on;
     }
     app.remote_content = Some(ui.cursor().min - top + vec2(w, 0.0));
 

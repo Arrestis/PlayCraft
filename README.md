@@ -4,6 +4,7 @@ A free, open-source disc and media player for **Windows, macOS and Linux**.
 
 - **Discs:** DVD-Video, audio CD, Blu-ray, Ultra HD Blu-ray, plus `VIDEO_TS` / `BDMV` folders and ISO images
 - **Files:** almost any video, music or photo format (MKV, MP4, AVI, MOV, M2TS, WebM, FLAC, MP3, JPG, HEIC…) through FFmpeg
+- **Remote:** a pop-out remote styled like a Blu-ray remote, with a mini mode and resizing. Its volume keys can control the computer's own volume.
 - **Disc menus:** DVD menus and Blu-ray (HDMV) menus, with mouse and keyboard control. Java-based (BD-J) Blu-ray menus fall back to the main movie.
 - **Playback:** resume and restart, chapters and titles, audio and subtitle tracks, subtitle files, A–B repeat, speed, snapshots, full screen
 - **Picture and sound:** brightness, contrast, colour and gamma; sharpen, denoise and deinterlace; Dolby/DTS passthrough, night mode, clearer dialogue
@@ -71,4 +72,10 @@ playcraft --screenshot out.png        # draw ~120 frames, save the window, exit
 
 ## Licence
 
-GPL-3.0-or-later. Bundled components keep their own licences; see `LICENSE`.
+PlayCraft is free, open-source software under the **GNU General Public License v3.0 or later**; the full text is in `LICENSE`. Anyone who shares PlayCraft, or a program built from it, must share its source code under the same licence. Bundled components keep their own licences; see `NOTICE.md`.
+
+## Activity log and changes
+
+PlayCraft writes what it does to `playcraft.log` in its settings folder (start-up, playback engine, discs found, what played, disc menus, errors). Open it from *Settings › About › Open activity log*. Once the log grows past 2 MB, it starts a new file and keeps the previous one as `playcraft.old.log`.
+
+Each version's changes are listed in `CHANGELOG.md`.

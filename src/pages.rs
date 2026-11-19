@@ -1016,8 +1016,20 @@ pub fn settings_page(app: &mut App, ui: &mut Ui) {
                 }
             }
             SettingsTab::About => {
-                ui.label(RichText::new("PlayCraft 0.1").size(18.0).strong());
+                ui.label(RichText::new(format!("PlayCraft {}", env!("CARGO_PKG_VERSION"))).size(18.0).strong());
                 ui.label("A free, open-source disc and media player for Windows, macOS and Linux.");
+                ui.hyperlink_to("Source code on GitHub", env!("CARGO_PKG_REPOSITORY"));
+                ui.add_space(8.0);
+                ui.label(RichText::new("Activity log").strong());
+                ui.label(RichText::new(format!("PlayCraft writes what it does (start-up, discs found, what played, disc menus, errors) to {}", crate::log::path().display())).color(TEXT_DIM).size(12.0));
+                ui.horizontal(|ui| {
+                    if ui.button("Open activity log").clicked() {
+                        open_path(&crate::log::path());
+                    }
+                    if ui.button("Open its folder").clicked() {
+                        open_path(&library::data_dir());
+                    }
+                });
                 ui.add_space(6.0);
                 ui.label(RichText::new("Built with Rust and egui. Playback by libmpv, FFmpeg, libdvdnav, libdvdread, libbluray and libcdio, all free, open-source projects. Licensed GPL-3.0-or-later.").color(TEXT_DIM));
                 ui.add_space(6.0);

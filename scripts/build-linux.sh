@@ -56,7 +56,7 @@ cargo deb --no-build --output dist/
 STAGE=dist/PlayCraft
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp target/release/playcraft README.md LICENSE "$STAGE/"
+cp target/release/playcraft README.md LICENSE NOTICE.md CHANGELOG.md "$STAGE/"
 cp packaging/playcraft.desktop assets/playcraft.png "$STAGE/"
 tar -C dist -czf dist/PlayCraft-linux-x64.tar.gz PlayCraft
 rm -rf "$STAGE"

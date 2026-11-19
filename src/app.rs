@@ -235,7 +235,8 @@ pub struct App {
     pub remote_float_init: (Option<egui::Pos2>, egui::Vec2),
     pub remote_content: Option<egui::Vec2>,
     pub remote_resize_to: Option<()>,
-    pub remote_size_cmd: bool,
+    /// Frames to wait for a requested window resize before reading the size back.
+    pub remote_size_cmd: u8,
     pub nav_last_mouse: Option<egui::Pos2>,
     pub aacs_rx: Option<Receiver<InstallMsg>>,
     pub aacs_status: String,
@@ -317,6 +318,10 @@ impl App {
             }
         }
         let engine = Engine::locate();
+        match &engine {
+            Ok(e) => crate::log::info(format!("Playback engine found: {} (client API {})", e.path, e.api_version())),
+            Err(e) => crate::log::warn(format!("Playback engine not found: {e}")),
+        }
         let drive_rx = spawn_drive_watcher(cc.egui_ctx.clone());
         let scan_rx = Some(library::scan(settings.folders.clone()));
         let mut app = App {
@@ -340,7 +345,7 @@ impl App {
             remote_float_init: (None, egui::vec2(240.0, 560.0)),
             remote_content: None,
             remote_resize_to: None,
-            remote_size_cmd: false,
+            remote_size_cmd: 0,
             nav_last_mouse: None,
             aacs_rx: None,
             aacs_status: String::new(),
@@ -418,7 +423,10 @@ impl App {
                 self.player = Some(p);
                 self.apply_settings();
             }
-            Err(e) => self.engine = Err(e),
+            Err(e) => {
+                crate::log::error(format!("Playback engine could not start: {e}"));
+                self.engine = Err(e);
+            }
         }
     }
 
@@ -463,6 +471,12 @@ impl App {
     // ---------- playback ----------
 
     pub fn notify(&mut self, msg: impl Into<String>, warn: bool) {
+        let msg: String = msg.into();
+        if warn {
+            crate::log::warn(&msg);
+        } else {
+            crate::log::info(&msg);
+        }
         self.toast = Some((msg.into(), Instant::now(), warn));
     }
 
@@ -500,7 +514,7 @@ impl App {
         };
         let supports = self.player.as_ref().is_some_and(|p| p.supports_nav());
         if nav_kind.is_some() {
-            eprintln!("[menus] kind={nav_kind:?} enabled={} skip={skip_menus} engine_support={supports} device={}", self.settings.disc_menus, item.device);
+            crate::log::info(format!("Disc menus: kind={nav_kind:?} enabled={} skip={skip_menus} engine_support={supports} device={}", self.settings.disc_menus, item.device));
         }
         if let (Some(kind), true, false, true) = (nav_kind, self.settings.disc_menus, skip_menus, supports) {
             let lang: String = self.settings.audio_lang.chars().take(2).collect();
@@ -512,7 +526,7 @@ impl App {
                     self.nav_fallback = Some(item.clone());
                 }
                 Err(e) => {
-                    eprintln!("[menus] could not start: {e}");
+                    crate::log::warn(format!("Disc menus could not start: {e}"));
                     self.log.push_back(format!("[menus] {e}"));
                 }
             }
@@ -548,6 +562,12 @@ impl App {
             });
             self.settings.save();
         }
+        crate::log::info(format!(
+            "Playing: {} [{}]{}",
+            item.title,
+            item.badge(),
+            if self.nav.is_some() { " with disc menus" } else { "" }
+        ));
         self.current = Some(item);
         self.page = Page::NowPlaying;
     }
@@ -618,6 +638,9 @@ impl App {
     }
 
     pub fn stop(&mut self) {
+        if let Some(c) = &self.current {
+            crate::log::info(format!("Stopped: {}", c.title));
+        }
         self.remember_position();
         self.settings.save();
         if let Some(p) = &self.player {
@@ -901,6 +924,7 @@ impl App {
         }
         if let Some(rx) = &self.scan_rx {
             if let Ok(items) = rx.try_recv() {
+                crate::log::info(format!("Library scan finished: {} items", items.len()));
                 self.library = items;
                 self.scan_rx = None;
             }
@@ -975,7 +999,7 @@ impl App {
             let stalled = nav.shared.bytes.load(std::sync::atomic::Ordering::Relaxed) == 0 && nav.started.elapsed() > Duration::from_secs(20);
             if err.is_some() || stalled {
                 let why = err.unwrap_or_else(|| "the disc's menus didn't start".into());
-                eprintln!("[menus] falling back: {why}");
+                crate::log::warn(format!("Disc menus: falling back to the main movie: {why}"));
                 if let Some(item) = self.nav_fallback.take() {
                     self.notify(format!("Disc menus aren't available for this disc ({why}). Playing the main movie instead."), true);
                     self.skip_menus_next = true;
@@ -1224,7 +1248,7 @@ impl App {
         let frames = job.frames;
         if enter_at == Some(frames) {
             if let Some(n) = &self.nav {
-                eprintln!("[menus] test: pressing Enter (in menu: {})", n.shared.in_menu.load(Ordering::Acquire));
+                crate::log::info(format!("Test: pressing Enter (in menu: {})", n.shared.in_menu.load(Ordering::Acquire)));
                 n.input(crate::nav::NavInput::Enter);
             }
         }
@@ -1236,7 +1260,7 @@ impl App {
                 if v.len() >= 3 && v[0] as u32 == frames {
                     if let Some(n) = &self.nav {
                         let click = v.get(3).is_some_and(|c| *c > 0.0);
-                        eprintln!("[menus] test: pointer at {},{} click={click}", v[1], v[2]);
+                        crate::log::info(format!("Test: pointer at {},{} click={click}", v[1], v[2]));
                         n.input(if click { crate::nav::NavInput::MouseClick(v[1], v[2]) } else { crate::nav::NavInput::MouseMove(v[1], v[2]) });
                     }
                 }
@@ -1250,6 +1274,7 @@ impl App {
                 }
                 if mode.contains("full") {
                     self.settings.remote_mini = false;
+                    self.settings.remote_scale = 1.0;
                 }
                 if mode.contains("float") {
                     self.pop_out_remote(None);
@@ -1275,17 +1300,17 @@ impl App {
                 match image::RgbaImage::from_raw(w as u32, h as u32, bytes) {
                     Some(im) => {
                         if let Err(e) = im.save(&path) {
-                            eprintln!("could not save screenshot: {e}");
+                            crate::log::error(format!("Could not save screenshot: {e}"));
                         }
                     }
-                    None => eprintln!("could not build screenshot image"),
+                    None => crate::log::error("Could not build screenshot image"),
                 }
                 done.store(true, Ordering::Release);
                 c2.request_repaint();
             });
         }
         if job.frames > target + 900 {
-            eprintln!("screenshot timed out");
+            crate::log::error("Screenshot timed out");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
