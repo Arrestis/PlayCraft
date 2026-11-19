@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PlayCraft
+GenericName=Disc and Media Player
+Comment=Play DVD, CD, Blu-ray discs and media files
+Exec=playcraft %U
+Icon=playcraft
+Terminal=false
+Categories=AudioVideo;Video;Audio;Player;
+MimeType=video/mp4;video/x-matroska;video/x-msvideo;video/quicktime;video/mpeg;video/webm;video/mp2t;audio/mpeg;audio/flac;audio/x-wav;audio/ogg;application/x-iso9660-image;x-content/video-dvd;x-content/video-bluray;x-content/audio-cdda;

@@ -1,0 +1,57 @@
+[package]
+name = "playcraft"
+version = "0.1.0"
+edition = "2021"
+description = "PlayCraft - a free, open-source DVD, CD, Blu-ray and media player for Windows, macOS and Linux"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Arrestis/PlayCraft"
+
+[[bin]]
+name = "playcraft"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.37"
+libloading = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+walkdir = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Media_Multimedia",
+    "Win32_System_Diagnostics_Debug",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = "0.30"
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico"] }
+embed-resource = "3"
+
+[package.metadata.deb]
+maintainer = "PlayCraft contributors"
+section = "video"
+depends = "$auto, libmpv2 | libmpv1, libbluray2, libaacs0, libbdplus0, libdvdnav4, libdvdread8 | libdvdread7"
+extended-description = "Plays DVD, audio CD, Blu-ray and Ultra HD Blu-ray discs, disc folders, ISO images and almost any media file."
+assets = [
+    ["target/release/playcraft", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/playcraft/README.md", "644"],
+    ["packaging/playcraft.desktop", "usr/share/applications/", "644"],
+    ["assets/playcraft.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+]
+
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

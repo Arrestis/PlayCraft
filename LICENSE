@@ -1,0 +1,19 @@
+PlayCraft
+Copyright (C) 2026 PlayCraft contributors
+
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU General Public License for more details.
+
+The full licence text is at https://www.gnu.org/licenses/gpl-3.0.txt
+
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Bundled third-party components keep their own licences:
+  libmpv (GPL-2.0-or-later build), FFmpeg (GPL), libdvdnav/libdvdread (GPL-2.0),
+  libbluray (LGPL-2.1), libaacs (LGPL-2.1), libbdplus (LGPL-2.1), libgcrypt (LGPL-2.1),
+  libgpg-error (LGPL-2.1), libiconv/gettext runtime (LGPL), winpthreads (MIT/BSD).
