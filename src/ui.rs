@@ -599,7 +599,9 @@ fn remote(app: &mut App, ctx: &egui::Context) {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_pos(ctx.content_rect().right_bottom() - vec2(260.0, 420.0))
+            .title_bar(false)
+            .frame(remote_frame())
+            .default_pos(ctx.content_rect().right_bottom() - vec2(270.0, 640.0))
             .show(ctx, |ui| remote_ui(app, ui));
     } else {
         let bottom = app.remote_anchor.map(|r| r.top() - 10.0).unwrap_or(ctx.content_rect().bottom() - 100.0);
@@ -609,12 +611,7 @@ fn remote(app: &mut App, ctx: &egui::Context) {
             .pivot(Align2::RIGHT_BOTTOM)
             .fixed_pos(pos2(right, bottom))
             .show(ctx, |ui| {
-                Frame::new()
-                    .fill(Color32::from_rgb(38, 38, 38))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
-                    .corner_radius(10.0)
-                    .inner_margin(Margin::same(12))
-                    .show(ui, |ui| remote_ui(app, ui));
+                remote_frame().show(ui, |ui| remote_ui(app, ui));
             });
     }
     if !open {
@@ -622,102 +619,320 @@ fn remote(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn remote_key(ui: &mut Ui, label: &str, w: f32, enabled: bool) -> bool {
-    ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(13.0)).min_size(vec2(w, 30.0)).corner_radius(6.0)).clicked()
+fn remote_frame() -> Frame {
+    Frame::new()
+        .fill(Color32::from_rgb(18, 18, 20))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(60, 60, 64)))
+        .corner_radius(22.0)
+        .inner_margin(Margin::symmetric(14, 12))
+        .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(140) })
 }
 
-fn arrow_key(ui: &mut Ui, dir: u8, enabled: bool) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), if enabled { Sense::click() } else { Sense::hover() });
+const KEY: Color32 = Color32::from_rgb(44, 44, 47);
+const KEY_HOVER: Color32 = Color32::from_rgb(64, 64, 68);
+const KEY_DOWN: Color32 = Color32::from_rgb(28, 110, 210);
+const KEY_OFF: Color32 = Color32::from_rgb(32, 32, 34);
+const KEY_TEXT: Color32 = Color32::from_rgb(236, 236, 236);
+
+/// One remote key drawn as any shape; `hit` is the clickable area.
+fn key_shape(ui: &mut Ui, id: &str, pts: Vec<egui::Pos2>, hit: Rect, enabled: bool) -> egui::Response {
+    let resp = ui.interact(hit, ui.scope_id().with(id), if enabled { Sense::click() } else { Sense::hover() });
     let fill = if !enabled {
-        Color32::from_rgb(44, 44, 44)
+        KEY_OFF
     } else if resp.is_pointer_button_down_on() {
-        ACCENT
+        KEY_DOWN
     } else if resp.hovered() {
-        Color32::from_rgb(76, 76, 76)
+        KEY_HOVER
     } else {
-        Color32::from_rgb(58, 58, 58)
+        KEY
     };
-    ui.painter().rect_filled(rect, 8.0, fill);
-    let c = rect.center();
-    let s = 9.0;
-    let pts = match dir {
-        0 => [pos2(c.x, c.y - s), pos2(c.x + s, c.y + s * 0.6), pos2(c.x - s, c.y + s * 0.6)],
-        1 => [pos2(c.x, c.y + s), pos2(c.x - s, c.y - s * 0.6), pos2(c.x + s, c.y - s * 0.6)],
-        2 => [pos2(c.x - s, c.y), pos2(c.x + s * 0.6, c.y - s), pos2(c.x + s * 0.6, c.y + s)],
-        _ => [pos2(c.x + s, c.y), pos2(c.x - s * 0.6, c.y + s), pos2(c.x - s * 0.6, c.y - s)],
+    ui.painter().add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, Color32::from_rgb(8, 8, 8))));
+    resp
+}
+
+fn key_rect(ui: &mut Ui, id: &str, r: Rect, radius: f32, enabled: bool) -> egui::Response {
+    let resp = ui.interact(r, ui.scope_id().with(id), if enabled { Sense::click() } else { Sense::hover() });
+    let fill = if !enabled {
+        KEY_OFF
+    } else if resp.is_pointer_button_down_on() {
+        KEY_DOWN
+    } else if resp.hovered() {
+        KEY_HOVER
+    } else {
+        KEY
     };
-    let col = if enabled { Color32::WHITE } else { TEXT_DIM };
-    ui.painter().add(egui::Shape::convex_polygon(pts.to_vec(), col, Stroke::NONE));
-    resp.clicked()
+    ui.painter().rect_filled(r, radius, fill);
+    ui.painter().rect_stroke(r, radius, Stroke::new(1.0, Color32::from_rgb(8, 8, 8)), egui::StrokeKind::Inside);
+    resp
+}
+
+fn key_label(ui: &Ui, pos: egui::Pos2, align: Align2, text: &str, size: f32, enabled: bool) {
+    let col = if enabled { KEY_TEXT } else { Color32::from_rgb(110, 110, 110) };
+    ui.painter().text(pos, align, text, FontId::proportional(size), col);
+}
+
+/// Small white arrow like the ones printed on remote keys.
+fn key_arrow(ui: &Ui, c: egui::Pos2, dir: u8, enabled: bool) {
+    let col = if enabled { KEY_TEXT } else { Color32::from_rgb(110, 110, 110) };
+    let (d, n) = match dir {
+        0 => (vec2(0.0, -1.0), vec2(1.0, 0.0)),
+        1 => (vec2(0.0, 1.0), vec2(1.0, 0.0)),
+        2 => (vec2(-1.0, 0.0), vec2(0.0, 1.0)),
+        _ => (vec2(1.0, 0.0), vec2(0.0, 1.0)),
+    };
+    let tip = c + d * 8.0;
+    ui.painter().add(egui::Shape::convex_polygon(vec![tip, c + n * 7.0, c - n * 7.0], col, Stroke::NONE));
+    ui.painter().rect_filled(Rect::from_center_size(c - d * 4.0, vec2(if d.x == 0.0 { 5.0 } else { 9.0 }, if d.x == 0.0 { 9.0 } else { 5.0 })), 0.0, col);
 }
 
 fn remote_ui(app: &mut App, ui: &mut Ui) {
     use crate::nav::NavInput;
     let on = app.nav.is_some();
-    ui.set_width(196.0);
+    let playing = app.current.is_some();
+    let w = 210.0;
+    ui.set_width(w);
+
+    // Header: grip label and pop-out / dock / close.
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Remote").strong().color(TEXT));
+        ui.label(RichText::new("REMOTE").size(11.0).color(TEXT_DIM));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let tip = if app.remote_floating { "Dock it back to the bar" } else { "Pop out into its own window" };
+            if ui.small_button("✕").on_hover_text("Close the remote").clicked() {
+                app.remote_open = false;
+            }
+            let tip = if app.remote_floating { "Dock it back above the bar" } else { "Pop out into its own window you can move" };
             if ui.small_button(if app.remote_floating { "Dock" } else { "Pop out" }).on_hover_text(tip).clicked() {
                 app.remote_floating = !app.remote_floating;
             }
         });
     });
-    ui.add_space(4.0);
-    let mut input = None;
-    ui.horizontal(|ui| {
-        if remote_key(ui, "Title menu", 94.0, on) {
-            input = Some(NavInput::TitleMenu);
-        }
-        if remote_key(ui, "Pop-up menu", 94.0, on) {
-            input = Some(NavInput::Popup);
-        }
-    });
     ui.add_space(6.0);
-    // Direction pad with Select in the middle.
-    ui.vertical_centered(|ui| {
-        if arrow_key(ui, 0, on) {
-            input = Some(NavInput::Up);
+
+    let mut input: Option<NavInput> = None;
+    let mut action: Option<&'static str> = None;
+
+    // ---- Navigation cluster: corner keys, diamond arrows, centre select ----
+    let (area, _) = ui.allocate_exact_size(vec2(w, w), Sense::hover());
+    let o = area.min;
+    let c = area.center();
+    let s = w;
+    let p = |x: f32, y: f32| pos2(o.x + x * s, o.y + y * s);
+    // Corner keys (cut diagonally by the arrows, like the photo).
+    let corners = [
+        ("top_menu", vec![p(0.0, 0.0), p(0.36, 0.0), p(0.36, 0.06), p(0.06, 0.36), p(0.0, 0.36)], "TOP MENU", 0),
+        ("popup", vec![p(0.64, 0.0), p(1.0, 0.0), p(1.0, 0.36), p(0.94, 0.36), p(0.64, 0.06)], "POP UP/\nMENU", 1),
+        ("return", vec![p(0.0, 0.64), p(0.06, 0.64), p(0.36, 0.94), p(0.36, 1.0), p(0.0, 1.0)], "RETURN", 2),
+        ("options", vec![p(0.94, 0.64), p(1.0, 0.64), p(1.0, 1.0), p(0.64, 1.0), p(0.64, 0.94)], "OPTIONS", 3),
+    ];
+    let mut options_resp = None;
+    for (id, pts, label, k) in corners {
+        let hit = Rect::from_points(&pts);
+        let enabled = if k == 3 { true } else { on };
+        let r = key_shape(ui, id, pts, hit, enabled);
+        let (pos, align) = match k {
+            0 => (p(0.03, 0.03), Align2::LEFT_TOP),
+            1 => (p(0.97, 0.03), Align2::RIGHT_TOP),
+            2 => (p(0.03, 0.97), Align2::LEFT_BOTTOM),
+            _ => (p(0.97, 0.97), Align2::RIGHT_BOTTOM),
+        };
+        for (i, line) in label.lines().enumerate() {
+            let dy = if k >= 2 { -(label.lines().count() as f32 - 1.0 - i as f32) * 12.0 } else { i as f32 * 12.0 };
+            key_label(ui, pos + vec2(0.0, dy), align, line, 10.5, enabled);
         }
-    });
-    ui.horizontal(|ui| {
-        ui.add_space(10.0);
-        if arrow_key(ui, 2, on) {
-            input = Some(NavInput::Left);
+        match k {
+            0 if r.clicked() => input = Some(NavInput::TitleMenu),
+            1 if r.clicked() => input = Some(NavInput::Popup),
+            2 if r.clicked() => input = Some(NavInput::Return),
+            3 => options_resp = Some(r),
+            _ => {}
         }
-        let (rect, resp) = ui.allocate_exact_size(vec2(64.0, 44.0), if on { Sense::click() } else { Sense::hover() });
-        let fill = if !on { Color32::from_rgb(44, 44, 44) } else if resp.hovered() { ACCENT_HOVER } else { ACCENT };
-        ui.painter().rect_filled(rect, 22.0, fill);
-        ui.painter().text(rect.center(), Align2::CENTER_CENTER, "Select", FontId::proportional(13.0), if on { Color32::WHITE } else { TEXT_DIM });
-        if resp.on_hover_text("Choose the highlighted button (Enter)").clicked() {
-            input = Some(NavInput::Enter);
-        }
-        if arrow_key(ui, 3, on) {
-            input = Some(NavInput::Right);
-        }
-    });
-    ui.vertical_centered(|ui| {
-        if arrow_key(ui, 1, on) {
-            input = Some(NavInput::Down);
-        }
-    });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        if remote_key(ui, "Return", 94.0, on) {
-            input = Some(NavInput::Return);
-        }
-        if remote_key(ui, "Menu", 94.0, on) {
-            input = Some(NavInput::Menu);
-        }
-    });
-    if !on {
-        ui.add_space(4.0);
-        ui.label(RichText::new("Works while a DVD or Blu-ray is playing with its menus.").size(11.0).color(TEXT_DIM));
     }
+    // Diamond arrow keys around the centre.
+    let arrows = [
+        ("up", vec![p(0.30, 0.10), p(0.70, 0.10), p(0.80, 0.20), p(0.62, 0.38), p(0.38, 0.38), p(0.20, 0.20)], 0u8, p(0.5, 0.2)),
+        ("down", vec![p(0.38, 0.62), p(0.62, 0.62), p(0.80, 0.80), p(0.70, 0.90), p(0.30, 0.90), p(0.20, 0.80)], 1u8, p(0.5, 0.8)),
+        ("left", vec![p(0.20, 0.20), p(0.38, 0.38), p(0.38, 0.62), p(0.20, 0.80), p(0.10, 0.70), p(0.10, 0.30)], 2u8, p(0.2, 0.5)),
+        ("right", vec![p(0.80, 0.20), p(0.90, 0.30), p(0.90, 0.70), p(0.80, 0.80), p(0.62, 0.62), p(0.62, 0.38)], 3u8, p(0.8, 0.5)),
+    ];
+    for (id, pts, dir, mid) in arrows {
+        let hit = Rect::from_points(&pts).shrink(4.0);
+        let r = key_shape(ui, id, pts, hit, true);
+        key_arrow(ui, mid, dir, true);
+        if r.clicked() {
+            if on && app.nav_in_menu() {
+                input = Some([NavInput::Up, NavInput::Down, NavInput::Left, NavInput::Right][dir as usize]);
+            } else {
+                action = Some(["vol_up", "vol_down", "back", "fwd"][dir as usize]);
+            }
+        }
+    }
+    // Centre select key with the cross-hair mark.
+    let centre = Rect::from_center_size(c, vec2(s * 0.2, s * 0.2));
+    let r = key_rect(ui, "select", centre, 6.0, true);
+    let col = KEY_TEXT;
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![c + vec2(0.0, -5.0), c + vec2(5.0, 0.0), c + vec2(0.0, 5.0), c + vec2(-5.0, 0.0)],
+        col,
+        Stroke::NONE,
+    ));
+    for d in [vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)] {
+        ui.painter().line_segment([c + d * 9.0, c + d * 14.0], Stroke::new(1.6, col));
+    }
+    if r.on_hover_text("Select (Enter)").clicked() {
+        if on && app.nav_in_menu() {
+            input = Some(NavInput::Enter);
+        } else {
+            action = Some("play_pause");
+        }
+    }
+    if let Some(opt) = options_resp {
+        egui::Popup::menu(&opt).width(240.0).show(|ui| more_menu(app, ui));
+    }
+
+    // ---- HOME ----
+    ui.add_space(10.0);
+    let (row, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
+    let home = Rect::from_center_size(row.center(), vec2(w * 0.55, 30.0));
+    let hr = ui.interact(home, ui.scope_id().with("home"), Sense::click());
+    let fill = if hr.hovered() { Color32::from_rgb(140, 150, 214) } else { Color32::from_rgb(118, 128, 196) };
+    ui.painter().rect_filled(home, 5.0, fill);
+    ui.painter().text(home.center(), Align2::CENTER_CENTER, "HOME", FontId::proportional(16.0), Color32::WHITE);
+    if hr.on_hover_text("Back to the PlayCraft home page").clicked() {
+        action = Some("home");
+    }
+
+    // ---- Transport keys ----
+    ui.add_space(14.0);
+    let gap = 8.0;
+    let kh = 30.0;
+    // Row 1: rewind, play (wide), fast forward
+    let (row, _) = ui.allocate_exact_size(vec2(w, kh), Sense::hover());
+    let side = (w - 2.0 * gap) * 0.27;
+    let mid = w - 2.0 * gap - 2.0 * side;
+    let r_rew = Rect::from_min_size(row.min, vec2(side, kh));
+    let r_play = Rect::from_min_size(row.min + vec2(side + gap, 0.0), vec2(mid, kh));
+    let r_ff = Rect::from_min_size(row.min + vec2(side + gap + mid + gap, 0.0), vec2(side, kh));
+    for (id, rect, icon, act) in [("rew", r_rew, Icon::Rewind, "back"), ("play", r_play, Icon::Play, "play"), ("ff", r_ff, Icon::Forward, "fwd")] {
+        if key_rect(ui, id, rect, 5.0, true).clicked() {
+            action = Some(act);
+        }
+        icons::paint(ui.painter(), icon, Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), KEY_TEXT);
+    }
+    ui.add_space(gap);
+    // Row 2: previous, pause, stop, next
+    let (row, _) = ui.allocate_exact_size(vec2(w, kh), Sense::hover());
+    let q = (w - 3.0 * gap) / 4.0;
+    for (i, (id, icon, act)) in [("prev", Icon::Prev, "prev"), ("pause", Icon::Pause, "pause"), ("stop", Icon::Stop, "stop"), ("next", Icon::Next, "next")]
+        .into_iter()
+        .enumerate()
+    {
+        let rect = Rect::from_min_size(row.min + vec2(i as f32 * (q + gap), 0.0), vec2(q, kh));
+        if key_rect(ui, id, rect, 5.0, true).clicked() {
+            action = Some(act);
+        }
+        icons::paint(ui.painter(), icon, Rect::from_center_size(rect.center(), vec2(18.0, 18.0)), KEY_TEXT);
+    }
+    ui.add_space(gap + 4.0);
+    // Rows 3-4: SUBTITLE / mute on the left, volume rocker in the middle, AUDIO on the right.
+    let (block, _) = ui.allocate_exact_size(vec2(w, kh * 2.0 + gap), Sense::hover());
+    let colw = (w - 2.0 * gap) / 3.0;
+    let left = Rect::from_min_size(block.min, vec2(colw, kh));
+    let mute = Rect::from_min_size(block.min + vec2(0.0, kh + gap), vec2(colw, kh));
+    let rocker = Rect::from_min_size(block.min + vec2(colw + gap, 0.0), vec2(colw, kh * 2.0 + gap));
+    let audio = Rect::from_min_size(block.min + vec2(2.0 * (colw + gap), 0.0), vec2(colw, kh));
+    if key_rect(ui, "subtitle", left, 5.0, true).on_hover_text("Subtitles on / next language").clicked() {
+        action = Some("subtitle");
+    }
+    key_label(ui, left.center(), Align2::CENTER_CENTER, "SUBTITLE", 11.0, true);
+    if key_rect(ui, "audio", audio, 5.0, true).on_hover_text("Next audio language / format").clicked() {
+        action = Some("audio");
+    }
+    key_label(ui, audio.center(), Align2::CENTER_CENTER, "AUDIO", 11.0, true);
+    if key_rect(ui, "mute", mute, 5.0, true).on_hover_text("Mute").clicked() {
+        action = Some("mute");
+    }
+    icons::paint(ui.painter(), if app.muted { Icon::Mute } else { Icon::Volume }, Rect::from_center_size(mute.center(), vec2(18.0, 18.0)), KEY_TEXT);
+    // Rocker: top half volume up, bottom half volume down.
+    ui.painter().rect_filled(rocker, 6.0, KEY);
+    ui.painter().rect_stroke(rocker, 6.0, Stroke::new(1.0, Color32::from_rgb(8, 8, 8)), egui::StrokeKind::Inside);
+    let up = Rect::from_min_max(rocker.min, pos2(rocker.right(), rocker.center().y));
+    let down = Rect::from_min_max(pos2(rocker.left(), rocker.center().y), rocker.max);
+    let ur = ui.interact(up, ui.scope_id().with("vol_up"), Sense::click());
+    let dr = ui.interact(down, ui.scope_id().with("vol_down"), Sense::click());
+    for (r, rr) in [(&ur, up), (&dr, down)] {
+        if r.hovered() {
+            ui.painter().rect_filled(rr.shrink(2.0), 5.0, KEY_HOVER);
+        }
+    }
+    key_label(ui, up.center() - vec2(0.0, 6.0), Align2::CENTER_CENTER, "+", 22.0, true);
+    key_label(ui, rocker.center(), Align2::CENTER_CENTER, "VOL", 10.0, true);
+    key_label(ui, down.center() + vec2(0.0, 6.0), Align2::CENTER_CENTER, "−", 22.0, true);
+    if ur.on_hover_text("Volume up").clicked() {
+        action = Some("vol_up");
+    }
+    if dr.on_hover_text("Volume down").clicked() {
+        action = Some("vol_down");
+    }
+
+    if !on {
+        ui.add_space(6.0);
+        ui.label(RichText::new("Menu keys work while a DVD or Blu-ray plays with its menus.").size(11.0).color(TEXT_DIM));
+    }
+
+    // ---- Do what was pressed ----
     if let Some(i) = input {
         app.nav_input(i);
         app.page = Page::NowPlaying;
+    }
+    match action {
+        Some("home") => app.page = Page::Home,
+        Some("play") => {
+            if !playing || app.paused {
+                app.toggle_pause();
+            }
+        }
+        Some("pause") => {
+            if playing && !app.paused {
+                app.toggle_pause();
+            }
+        }
+        Some("play_pause") => app.toggle_pause(),
+        Some("stop") => app.stop(),
+        Some("back") => app.seek_rel(-10.0),
+        Some("fwd") => app.seek_rel(30.0),
+        Some("prev") => app.chapter_step(-1),
+        Some("next") => app.chapter_step(1),
+        Some("vol_up") => {
+            app.set_volume(app.settings.volume + 5.0);
+            app.settings.save();
+        }
+        Some("vol_down") => {
+            app.set_volume(app.settings.volume - 5.0);
+            app.settings.save();
+        }
+        Some("mute") => {
+            if let Some(p) = &app.player {
+                let _ = p.command(&["cycle", "mute"]);
+            }
+        }
+        Some("audio") => {
+            if let Some(p) = &app.player {
+                let _ = p.command(&["cycle", "audio"]);
+            }
+            app.last_track_poll = Instant::now() - Duration::from_secs(5);
+        }
+        Some("subtitle") => {
+            if let Some(n) = app.nav.clone() {
+                let on = !n.shared.show_subs.load(std::sync::atomic::Ordering::Acquire);
+                n.set_show_subs(on);
+                app.settings.subtitles_on = on;
+                app.settings.save();
+                app.notify(if on { "Subtitles on" } else { "Subtitles off" }, false);
+            } else if let Some(p) = &app.player {
+                let _ = p.command(&["cycle", "sub"]);
+                app.last_track_poll = Instant::now() - Duration::from_secs(5);
+            }
+        }
+        _ => {}
     }
 }
 

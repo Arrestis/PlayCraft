@@ -1179,6 +1179,7 @@ pub struct NavSession {
     pub kind: NavKind,
     backend: Mutex<Backend>,
     pending: Mutex<Vec<u8>>,
+    input_gen: AtomicU64,
     pub shared: Arc<NavShared>,
     pub started: Instant,
 }
@@ -1190,7 +1191,7 @@ impl NavSession {
             NavKind::Dvd => Backend::Dvd(Dvd::open(device, lang)?),
             NavKind::Bluray => Backend::Bd(Bd::open(device, &iso639_2(lang), shared.clone())?),
         };
-        Ok(Arc::new(NavSession { kind, backend: Mutex::new(backend), pending: Mutex::new(Vec::new()), shared, started: Instant::now() }))
+        Ok(Arc::new(NavSession { kind, backend: Mutex::new(backend), pending: Mutex::new(Vec::new()), input_gen: AtomicU64::new(0), shared, started: Instant::now() }))
     }
 
     /// Fill `buf` for the engine. Blocks while the disc waits (menus, stills).
@@ -1201,19 +1202,31 @@ impl NavSession {
                 return -1;
             }
             {
-                let mut pending = self.pending.lock().unwrap();
-                if !pending.is_empty() {
-                    let n = buf.len().min(pending.len());
-                    buf[..n].copy_from_slice(&pending[..n]);
-                    pending.drain(..n);
-                    self.shared.bytes.fetch_add(n as u64, Ordering::Relaxed);
-                    return n as i64;
+                // Never hold the data buffer and the navigator at the same time: the screen
+                // takes the navigator first when the viewer presses a button.
+                {
+                    let mut pending = self.pending.lock().unwrap();
+                    if !pending.is_empty() {
+                        let n = buf.len().min(pending.len());
+                        buf[..n].copy_from_slice(&pending[..n]);
+                        pending.drain(..n);
+                        self.shared.bytes.fetch_add(n as u64, Ordering::Relaxed);
+                        return n as i64;
+                    }
                 }
-                let mut be = self.backend.lock().unwrap();
-                let r = match &mut *be {
-                    Backend::Dvd(d) => d.step(&mut pending, &self.shared),
-                    Backend::Bd(b) => b.step(&mut pending, &self.shared),
+                let generation = self.input_gen.load(Ordering::Acquire);
+                let mut chunk = Vec::new();
+                let r = {
+                    let mut be = self.backend.lock().unwrap();
+                    match &mut *be {
+                        Backend::Dvd(d) => d.step(&mut chunk, &self.shared),
+                        Backend::Bd(b) => b.step(&mut chunk, &self.shared),
+                    }
                 };
+                // Data read just before a button press belongs to the old screen; drop it.
+                if !chunk.is_empty() && self.input_gen.load(Ordering::Acquire) == generation {
+                    self.pending.lock().unwrap().extend_from_slice(&chunk);
+                }
                 match r {
                     Ok(Step::Data) | Ok(Step::Again) => {
                         spins += 1;
@@ -1235,12 +1248,15 @@ impl NavSession {
     }
 
     pub fn input(&self, i: NavInput) {
-        let mut be = self.backend.lock().unwrap();
-        match &mut *be {
-            Backend::Dvd(d) => d.input(i, &self.shared),
-            Backend::Bd(b) => b.input(i, &self.shared),
+        {
+            let mut be = self.backend.lock().unwrap();
+            match &mut *be {
+                Backend::Dvd(d) => d.input(i, &self.shared),
+                Backend::Bd(b) => b.input(i, &self.shared),
+            }
         }
         if self.shared.restart.load(Ordering::Acquire) {
+            self.input_gen.fetch_add(1, Ordering::AcqRel);
             self.pending.lock().unwrap().clear();
         }
     }

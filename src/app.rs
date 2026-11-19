@@ -1213,10 +1213,11 @@ impl App {
         if let Ok(seq) = std::env::var("PLAYCRAFT_TEST_MOUSE") {
             for step in seq.split(';') {
                 let v: Vec<f32> = step.split(':').filter_map(|s| s.parse().ok()).collect();
-                if v.len() == 3 && v[0] as u32 == frames {
+                if v.len() >= 3 && v[0] as u32 == frames {
                     if let Some(n) = &self.nav {
-                        eprintln!("[menus] test: pointer at {},{}", v[1], v[2]);
-                        n.input(crate::nav::NavInput::MouseMove(v[1], v[2]));
+                        let click = v.get(3).is_some_and(|c| *c > 0.0);
+                        eprintln!("[menus] test: pointer at {},{} click={click}", v[1], v[2]);
+                        n.input(if click { crate::nav::NavInput::MouseClick(v[1], v[2]) } else { crate::nav::NavInput::MouseMove(v[1], v[2]) });
                     }
                 }
             }
