@@ -230,6 +230,12 @@ pub struct App {
     pub remote_open: bool,
     pub remote_floating: bool,
     pub remote_anchor: Option<Rect>,
+    pub remote_icon: Option<Arc<egui::IconData>>,
+    /// Where and how big the popped-out remote window starts.
+    pub remote_float_init: (Option<egui::Pos2>, egui::Vec2),
+    pub remote_content: Option<egui::Vec2>,
+    pub remote_resize_to: Option<()>,
+    pub remote_size_cmd: bool,
     pub nav_last_mouse: Option<egui::Pos2>,
     pub aacs_rx: Option<Receiver<InstallMsg>>,
     pub aacs_status: String,
@@ -330,6 +336,11 @@ impl App {
             remote_open: false,
             remote_floating: false,
             remote_anchor: None,
+            remote_icon: None,
+            remote_float_init: (None, egui::vec2(240.0, 560.0)),
+            remote_content: None,
+            remote_resize_to: None,
+            remote_size_cmd: false,
             nav_last_mouse: None,
             aacs_rx: None,
             aacs_status: String::new(),
@@ -1133,6 +1144,15 @@ impl App {
         Some(((pos.x - r.left()) / r.width() * fw, (pos.y - r.top()) / r.height() * fh))
     }
 
+    /// Move the remote into its own desktop window (optionally at a screen position).
+    pub fn pop_out_remote(&mut self, at: Option<egui::Pos2>) {
+        let s = self.settings.remote_scale.clamp(0.5, 2.5);
+        let base = if self.settings.remote_mini { 150.0 } else { 210.0 };
+        let h = self.remote_content.map(|c| c.y + 24.0).unwrap_or(560.0);
+        self.remote_float_init = (at, egui::vec2(base * s + 28.0, h));
+        self.remote_floating = true;
+    }
+
     pub fn nav_in_menu(&self) -> bool {
         self.nav.as_ref().is_some_and(|n| n.shared.in_menu.load(std::sync::atomic::Ordering::Acquire))
     }
@@ -1222,8 +1242,19 @@ impl App {
                 }
             }
         }
-        if frames == 5 && std::env::var("PLAYCRAFT_TEST_REMOTE").is_ok() {
-            self.remote_open = true;
+        if frames == 5 {
+            if let Ok(mode) = std::env::var("PLAYCRAFT_TEST_REMOTE") {
+                self.remote_open = true;
+                if mode.contains("mini") {
+                    self.settings.remote_mini = true;
+                }
+                if mode.contains("full") {
+                    self.settings.remote_mini = false;
+                }
+                if mode.contains("float") {
+                    self.pop_out_remote(None);
+                }
+            }
         }
         let Some(job) = &mut self.screenshot else { return };
         let target = SCREENSHOT_FRAMES.load(Ordering::Relaxed);

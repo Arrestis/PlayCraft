@@ -74,6 +74,11 @@ pub struct Settings {
     pub licensed_player: Option<PathBuf>,
     /// Start DVDs and Blu-rays at their own menus.
     pub disc_menus: bool,
+    /// Remote size (1.0 = normal), mini layout, and whether its volume keys
+    /// control the computer (true) or only PlayCraft (false).
+    pub remote_scale: f32,
+    pub remote_mini: bool,
+    pub remote_pc_volume: bool,
 }
 
 impl Default for Settings {
@@ -104,6 +109,9 @@ impl Default for Settings {
             auto_play_disc: false,
             licensed_player: None,
             disc_menus: true,
+            remote_scale: 1.0,
+            remote_mini: false,
+            remote_pc_volume: true,
         }
     }
 }

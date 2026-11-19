@@ -14,6 +14,7 @@ mod icons;
 mod library;
 mod mpv;
 mod nav;
+mod sysvol;
 mod pages;
 mod ui;
 
@@ -81,7 +82,7 @@ fn main() -> eframe::Result<()> {
 pub const ICON_BYTES: &[u8] = include_bytes!("../assets/icon.jpg");
 
 /// The window icon, made from the bundled picture with rounded corners.
-fn app_icon() -> egui::IconData {
+pub fn app_icon() -> egui::IconData {
     match icon_mask::icon_rgba(ICON_BYTES, 256) {
         Some(img) => egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() },
         None => egui::IconData::default(),

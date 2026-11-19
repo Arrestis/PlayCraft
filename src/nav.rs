@@ -16,7 +16,7 @@ pub enum NavKind {
     Bluray,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NavInput {
     Up,
     Down,

@@ -588,21 +588,72 @@ fn control_bar(app: &mut App, ui: &mut Ui) {
     app.remote_anchor = Some(r);
 }
 
-/// The remote panel: docked above its button in the bar, or popped out as a window.
+/// Remote widths at size 1.0 (full and mini layouts), not counting the frame margin.
+const REMOTE_W: f32 = 210.0;
+const REMOTE_MINI_W: f32 = 150.0;
+const REMOTE_PAD: f32 = 28.0;
+
+fn remote_base_w(mini: bool) -> f32 {
+    if mini { REMOTE_MINI_W } else { REMOTE_W }
+}
+
+/// The remote: docked above its button in the bar, or popped out into its own window
+/// that can be moved anywhere on the desktop, even outside PlayCraft.
 fn remote(app: &mut App, ctx: &egui::Context) {
     if !app.remote_open {
         return;
     }
-    let mut open = true;
     if app.remote_floating {
-        egui::Window::new("Remote")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(false)
-            .frame(remote_frame())
-            .default_pos(ctx.content_rect().right_bottom() - vec2(270.0, 640.0))
-            .show(ctx, |ui| remote_ui(app, ui));
+        let id = egui::ViewportId::from_hash_of("playcraft-remote");
+        if app.remote_icon.is_none() {
+            app.remote_icon = Some(std::sync::Arc::new(crate::app_icon()));
+        }
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title("PlayCraft Remote")
+            .with_inner_size(app.remote_float_init.1)
+            .with_min_inner_size([110.0, 150.0])
+            .with_resizable(true)
+            .with_always_on_top();
+        if let Some(icon) = &app.remote_icon {
+            builder = builder.with_icon(icon.clone());
+        }
+        if let Some(pos) = app.remote_float_init.0 {
+            builder = builder.with_position(pos);
+        }
+        ctx.show_viewport_immediate(id, builder, |ui, _class| {
+            let vctx = ui.ctx().clone();
+            if vctx.input(|i| i.viewport().close_requested()) {
+                app.remote_open = false;
+                app.remote_floating = false;
+                return;
+            }
+            // Dragging the window's edge resizes the whole remote.
+            let inner = vctx.input(|i| i.viewport().inner_rect);
+            if let Some(r) = inner {
+                if !app.remote_size_cmd {
+                    let s = ((r.width() - REMOTE_PAD) / remote_base_w(app.settings.remote_mini)).clamp(0.5, 2.5);
+                    if (s - app.settings.remote_scale).abs() > 0.02 {
+                        app.settings.remote_scale = s;
+                    }
+                }
+            }
+            app.remote_size_cmd = false;
+            egui::CentralPanel::default().frame(remote_frame(false)).show(ui, |ui| remote_ui(app, ui));
+            // Fit the window's height to the remote.
+            if let (Some(r), Some(c)) = (inner, app.remote_content) {
+                let want = vec2(r.width(), c.y + 24.0);
+                if (r.height() - want.y).abs() > 6.0 {
+                    vctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(want));
+                }
+            }
+            if app.remote_resize_to.take().is_some() {
+                let s = app.settings.remote_scale;
+                let w = remote_base_w(app.settings.remote_mini) * s + REMOTE_PAD;
+                let h = app.remote_content.map(|c| c.y + 24.0).unwrap_or(500.0);
+                vctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(w, h)));
+                app.remote_size_cmd = true;
+            }
+        });
     } else {
         let bottom = app.remote_anchor.map(|r| r.top() - 10.0).unwrap_or(ctx.content_rect().bottom() - 100.0);
         let right = ctx.content_rect().right() - 10.0;
@@ -611,21 +662,22 @@ fn remote(app: &mut App, ctx: &egui::Context) {
             .pivot(Align2::RIGHT_BOTTOM)
             .fixed_pos(pos2(right, bottom))
             .show(ctx, |ui| {
-                remote_frame().show(ui, |ui| remote_ui(app, ui));
+                remote_frame(true).show(ui, |ui| remote_ui(app, ui));
             });
-    }
-    if !open {
-        app.remote_open = false;
     }
 }
 
-fn remote_frame() -> Frame {
-    Frame::new()
+fn remote_frame(docked: bool) -> Frame {
+    let f = Frame::new()
         .fill(Color32::from_rgb(18, 18, 20))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(60, 60, 64)))
-        .corner_radius(22.0)
-        .inner_margin(Margin::symmetric(14, 12))
-        .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(140) })
+        .inner_margin(Margin::symmetric(14, 12));
+    if docked {
+        f.stroke(Stroke::new(1.0, Color32::from_rgb(60, 60, 64)))
+            .corner_radius(22.0)
+            .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(140) })
+    } else {
+        f
+    }
 }
 
 const KEY: Color32 = Color32::from_rgb(44, 44, 47);
@@ -634,10 +686,8 @@ const KEY_DOWN: Color32 = Color32::from_rgb(28, 110, 210);
 const KEY_OFF: Color32 = Color32::from_rgb(32, 32, 34);
 const KEY_TEXT: Color32 = Color32::from_rgb(236, 236, 236);
 
-/// One remote key drawn as any shape; `hit` is the clickable area.
-fn key_shape(ui: &mut Ui, id: &str, pts: Vec<egui::Pos2>, hit: Rect, enabled: bool) -> egui::Response {
-    let resp = ui.interact(hit, ui.scope_id().with(id), if enabled { Sense::click() } else { Sense::hover() });
-    let fill = if !enabled {
+fn key_fill(resp: &egui::Response, enabled: bool) -> Color32 {
+    if !enabled {
         KEY_OFF
     } else if resp.is_pointer_button_down_on() {
         KEY_DOWN
@@ -645,23 +695,19 @@ fn key_shape(ui: &mut Ui, id: &str, pts: Vec<egui::Pos2>, hit: Rect, enabled: bo
         KEY_HOVER
     } else {
         KEY
-    };
-    ui.painter().add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0, Color32::from_rgb(8, 8, 8))));
+    }
+}
+
+/// One remote key drawn as any shape; `hit` is the clickable area.
+fn key_shape(ui: &mut Ui, id: &str, pts: Vec<egui::Pos2>, hit: Rect, enabled: bool) -> egui::Response {
+    let resp = ui.interact(hit, ui.scope_id().with(id), if enabled { Sense::click() } else { Sense::hover() });
+    ui.painter().add(egui::Shape::convex_polygon(pts, key_fill(&resp, enabled), Stroke::new(1.0, Color32::from_rgb(8, 8, 8))));
     resp
 }
 
 fn key_rect(ui: &mut Ui, id: &str, r: Rect, radius: f32, enabled: bool) -> egui::Response {
     let resp = ui.interact(r, ui.scope_id().with(id), if enabled { Sense::click() } else { Sense::hover() });
-    let fill = if !enabled {
-        KEY_OFF
-    } else if resp.is_pointer_button_down_on() {
-        KEY_DOWN
-    } else if resp.hovered() {
-        KEY_HOVER
-    } else {
-        KEY
-    };
-    ui.painter().rect_filled(r, radius, fill);
+    ui.painter().rect_filled(r, radius, key_fill(&resp, enabled));
     ui.painter().rect_stroke(r, radius, Stroke::new(1.0, Color32::from_rgb(8, 8, 8)), egui::StrokeKind::Inside);
     resp
 }
@@ -672,81 +718,81 @@ fn key_label(ui: &Ui, pos: egui::Pos2, align: Align2, text: &str, size: f32, ena
 }
 
 /// Small white arrow like the ones printed on remote keys.
-fn key_arrow(ui: &Ui, c: egui::Pos2, dir: u8, enabled: bool) {
-    let col = if enabled { KEY_TEXT } else { Color32::from_rgb(110, 110, 110) };
+fn key_arrow(ui: &Ui, c: egui::Pos2, dir: u8, s: f32) {
     let (d, n) = match dir {
         0 => (vec2(0.0, -1.0), vec2(1.0, 0.0)),
         1 => (vec2(0.0, 1.0), vec2(1.0, 0.0)),
         2 => (vec2(-1.0, 0.0), vec2(0.0, 1.0)),
         _ => (vec2(1.0, 0.0), vec2(0.0, 1.0)),
     };
-    let tip = c + d * 8.0;
-    ui.painter().add(egui::Shape::convex_polygon(vec![tip, c + n * 7.0, c - n * 7.0], col, Stroke::NONE));
-    ui.painter().rect_filled(Rect::from_center_size(c - d * 4.0, vec2(if d.x == 0.0 { 5.0 } else { 9.0 }, if d.x == 0.0 { 9.0 } else { 5.0 })), 0.0, col);
+    let tip = c + d * 8.0 * s;
+    ui.painter().add(egui::Shape::convex_polygon(vec![tip, c + n * 7.0 * s, c - n * 7.0 * s], KEY_TEXT, Stroke::NONE));
+    let stem = if d.x == 0.0 { vec2(5.0, 9.0) } else { vec2(9.0, 5.0) } * s;
+    ui.painter().rect_filled(Rect::from_center_size(c - d * 4.0 * s, stem), 0.0, KEY_TEXT);
 }
 
-fn remote_ui(app: &mut App, ui: &mut Ui) {
+/// What a remote key asks for.
+#[derive(Clone, Copy, PartialEq)]
+enum RemoteAct {
+    Nav(crate::nav::NavInput),
+    Home,
+    Play,
+    Pause,
+    PlayPause,
+    Stop,
+    Back,
+    Fwd,
+    Prev,
+    Next,
+    VolUp,
+    VolDown,
+    Mute,
+    Audio,
+    Subtitle,
+}
+
+/// Direction pad (with corner keys in the full layout). Returns the pressed key.
+fn remote_pad(app: &mut App, ui: &mut Ui, size: f32, corners: bool, act: &mut Option<RemoteAct>) {
     use crate::nav::NavInput;
     let on = app.nav.is_some();
-    let playing = app.current.is_some();
-    let w = 210.0;
-    ui.set_width(w);
-
-    // Header: grip label and pop-out / dock / close.
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("REMOTE").size(11.0).color(TEXT_DIM));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.small_button("✕").on_hover_text("Close the remote").clicked() {
-                app.remote_open = false;
-            }
-            let tip = if app.remote_floating { "Dock it back above the bar" } else { "Pop out into its own window you can move" };
-            if ui.small_button(if app.remote_floating { "Dock" } else { "Pop out" }).on_hover_text(tip).clicked() {
-                app.remote_floating = !app.remote_floating;
-            }
-        });
-    });
-    ui.add_space(6.0);
-
-    let mut input: Option<NavInput> = None;
-    let mut action: Option<&'static str> = None;
-
-    // ---- Navigation cluster: corner keys, diamond arrows, centre select ----
-    let (area, _) = ui.allocate_exact_size(vec2(w, w), Sense::hover());
+    let menu = on && app.nav_in_menu();
+    let s = size / REMOTE_W; // drawing scale for text and arrows
+    let (area, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
     let o = area.min;
     let c = area.center();
-    let s = w;
-    let p = |x: f32, y: f32| pos2(o.x + x * s, o.y + y * s);
-    // Corner keys (cut diagonally by the arrows, like the photo).
-    let corners = [
-        ("top_menu", vec![p(0.0, 0.0), p(0.36, 0.0), p(0.36, 0.06), p(0.06, 0.36), p(0.0, 0.36)], "TOP MENU", 0),
-        ("popup", vec![p(0.64, 0.0), p(1.0, 0.0), p(1.0, 0.36), p(0.94, 0.36), p(0.64, 0.06)], "POP UP/\nMENU", 1),
-        ("return", vec![p(0.0, 0.64), p(0.06, 0.64), p(0.36, 0.94), p(0.36, 1.0), p(0.0, 1.0)], "RETURN", 2),
-        ("options", vec![p(0.94, 0.64), p(1.0, 0.64), p(1.0, 1.0), p(0.64, 1.0), p(0.64, 0.94)], "OPTIONS", 3),
-    ];
+    let p = |x: f32, y: f32| pos2(o.x + x * size, o.y + y * size);
     let mut options_resp = None;
-    for (id, pts, label, k) in corners {
-        let hit = Rect::from_points(&pts);
-        let enabled = if k == 3 { true } else { on };
-        let r = key_shape(ui, id, pts, hit, enabled);
-        let (pos, align) = match k {
-            0 => (p(0.03, 0.03), Align2::LEFT_TOP),
-            1 => (p(0.97, 0.03), Align2::RIGHT_TOP),
-            2 => (p(0.03, 0.97), Align2::LEFT_BOTTOM),
-            _ => (p(0.97, 0.97), Align2::RIGHT_BOTTOM),
-        };
-        for (i, line) in label.lines().enumerate() {
-            let dy = if k >= 2 { -(label.lines().count() as f32 - 1.0 - i as f32) * 12.0 } else { i as f32 * 12.0 };
-            key_label(ui, pos + vec2(0.0, dy), align, line, 10.5, enabled);
-        }
-        match k {
-            0 if r.clicked() => input = Some(NavInput::TitleMenu),
-            1 if r.clicked() => input = Some(NavInput::Popup),
-            2 if r.clicked() => input = Some(NavInput::Return),
-            3 => options_resp = Some(r),
-            _ => {}
+    if corners {
+        let list = [
+            ("top_menu", vec![p(0.0, 0.0), p(0.36, 0.0), p(0.36, 0.06), p(0.06, 0.36), p(0.0, 0.36)], "TOP MENU", 0),
+            ("popup", vec![p(0.64, 0.0), p(1.0, 0.0), p(1.0, 0.36), p(0.94, 0.36), p(0.64, 0.06)], "POP UP/\nMENU", 1),
+            ("return", vec![p(0.0, 0.64), p(0.06, 0.64), p(0.36, 0.94), p(0.36, 1.0), p(0.0, 1.0)], "RETURN", 2),
+            ("options", vec![p(0.94, 0.64), p(1.0, 0.64), p(1.0, 1.0), p(0.64, 1.0), p(0.64, 0.94)], "OPTIONS", 3),
+        ];
+        for (id, pts, label, k) in list {
+            let hit = Rect::from_points(&pts);
+            let enabled = k == 3 || on;
+            let r = key_shape(ui, id, pts, hit, enabled);
+            let (pos, align) = match k {
+                0 => (p(0.03, 0.03), Align2::LEFT_TOP),
+                1 => (p(0.97, 0.03), Align2::RIGHT_TOP),
+                2 => (p(0.03, 0.97), Align2::LEFT_BOTTOM),
+                _ => (p(0.97, 0.97), Align2::RIGHT_BOTTOM),
+            };
+            let n = label.lines().count() as f32;
+            for (i, line) in label.lines().enumerate() {
+                let dy = if k >= 2 { -(n - 1.0 - i as f32) * 12.0 * s } else { i as f32 * 12.0 * s };
+                key_label(ui, pos + vec2(0.0, dy), align, line, 10.5 * s, enabled);
+            }
+            match k {
+                0 if r.clicked() => *act = Some(RemoteAct::Nav(NavInput::TitleMenu)),
+                1 if r.clicked() => *act = Some(RemoteAct::Nav(NavInput::Popup)),
+                2 if r.clicked() => *act = Some(RemoteAct::Nav(NavInput::Return)),
+                3 => options_resp = Some(r),
+                _ => {}
+            }
         }
     }
-    // Diamond arrow keys around the centre.
     let arrows = [
         ("up", vec![p(0.30, 0.10), p(0.70, 0.10), p(0.80, 0.20), p(0.62, 0.38), p(0.38, 0.38), p(0.20, 0.20)], 0u8, p(0.5, 0.2)),
         ("down", vec![p(0.38, 0.62), p(0.62, 0.62), p(0.80, 0.80), p(0.70, 0.90), p(0.30, 0.90), p(0.20, 0.80)], 1u8, p(0.5, 0.8)),
@@ -754,173 +800,311 @@ fn remote_ui(app: &mut App, ui: &mut Ui) {
         ("right", vec![p(0.80, 0.20), p(0.90, 0.30), p(0.90, 0.70), p(0.80, 0.80), p(0.62, 0.62), p(0.62, 0.38)], 3u8, p(0.8, 0.5)),
     ];
     for (id, pts, dir, mid) in arrows {
-        let hit = Rect::from_points(&pts).shrink(4.0);
+        let hit = Rect::from_points(&pts).shrink(4.0 * s);
         let r = key_shape(ui, id, pts, hit, true);
-        key_arrow(ui, mid, dir, true);
+        key_arrow(ui, mid, dir, s);
         if r.clicked() {
-            if on && app.nav_in_menu() {
-                input = Some([NavInput::Up, NavInput::Down, NavInput::Left, NavInput::Right][dir as usize]);
+            *act = Some(if menu {
+                RemoteAct::Nav([NavInput::Up, NavInput::Down, NavInput::Left, NavInput::Right][dir as usize])
             } else {
-                action = Some(["vol_up", "vol_down", "back", "fwd"][dir as usize]);
-            }
+                [RemoteAct::VolUp, RemoteAct::VolDown, RemoteAct::Back, RemoteAct::Fwd][dir as usize]
+            });
         }
     }
-    // Centre select key with the cross-hair mark.
-    let centre = Rect::from_center_size(c, vec2(s * 0.2, s * 0.2));
-    let r = key_rect(ui, "select", centre, 6.0, true);
-    let col = KEY_TEXT;
+    let centre = Rect::from_center_size(c, vec2(size * 0.2, size * 0.2));
+    let r = key_rect(ui, "select", centre, 6.0 * s, true);
     ui.painter().add(egui::Shape::convex_polygon(
-        vec![c + vec2(0.0, -5.0), c + vec2(5.0, 0.0), c + vec2(0.0, 5.0), c + vec2(-5.0, 0.0)],
-        col,
+        vec![c + vec2(0.0, -5.0) * s, c + vec2(5.0, 0.0) * s, c + vec2(0.0, 5.0) * s, c + vec2(-5.0, 0.0) * s],
+        KEY_TEXT,
         Stroke::NONE,
     ));
     for d in [vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)] {
-        ui.painter().line_segment([c + d * 9.0, c + d * 14.0], Stroke::new(1.6, col));
+        ui.painter().line_segment([c + d * 9.0 * s, c + d * 14.0 * s], Stroke::new(1.6 * s.max(0.6), KEY_TEXT));
     }
     if r.on_hover_text("Select (Enter)").clicked() {
-        if on && app.nav_in_menu() {
-            input = Some(NavInput::Enter);
-        } else {
-            action = Some("play_pause");
-        }
+        *act = Some(if menu { RemoteAct::Nav(NavInput::Enter) } else { RemoteAct::PlayPause });
     }
     if let Some(opt) = options_resp {
         egui::Popup::menu(&opt).width(240.0).show(|ui| more_menu(app, ui));
     }
+}
 
-    // ---- HOME ----
-    ui.add_space(10.0);
-    let (row, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
-    let home = Rect::from_center_size(row.center(), vec2(w * 0.55, 30.0));
-    let hr = ui.interact(home, ui.scope_id().with("home"), Sense::click());
-    let fill = if hr.hovered() { Color32::from_rgb(140, 150, 214) } else { Color32::from_rgb(118, 128, 196) };
-    ui.painter().rect_filled(home, 5.0, fill);
-    ui.painter().text(home.center(), Align2::CENTER_CENTER, "HOME", FontId::proportional(16.0), Color32::WHITE);
-    if hr.on_hover_text("Back to the PlayCraft home page").clicked() {
-        action = Some("home");
-    }
-
-    // ---- Transport keys ----
-    ui.add_space(14.0);
-    let gap = 8.0;
-    let kh = 30.0;
-    // Row 1: rewind, play (wide), fast forward
-    let (row, _) = ui.allocate_exact_size(vec2(w, kh), Sense::hover());
-    let side = (w - 2.0 * gap) * 0.27;
-    let mid = w - 2.0 * gap - 2.0 * side;
-    let r_rew = Rect::from_min_size(row.min, vec2(side, kh));
-    let r_play = Rect::from_min_size(row.min + vec2(side + gap, 0.0), vec2(mid, kh));
-    let r_ff = Rect::from_min_size(row.min + vec2(side + gap + mid + gap, 0.0), vec2(side, kh));
-    for (id, rect, icon, act) in [("rew", r_rew, Icon::Rewind, "back"), ("play", r_play, Icon::Play, "play"), ("ff", r_ff, Icon::Forward, "fwd")] {
-        if key_rect(ui, id, rect, 5.0, true).clicked() {
-            action = Some(act);
+/// A row of equal keys with icons or labels.
+fn key_row(ui: &mut Ui, w: f32, h: f32, gap: f32, keys: &[(&str, Option<Icon>, &str, RemoteAct)], s: f32, act: &mut Option<RemoteAct>) {
+    let (row, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    let n = keys.len() as f32;
+    let kw = (w - gap * (n - 1.0)) / n;
+    for (i, (id, icon, label, a)) in keys.iter().enumerate() {
+        let rect = Rect::from_min_size(row.min + vec2(i as f32 * (kw + gap), 0.0), vec2(kw, h));
+        if key_rect(ui, id, rect, 5.0 * s, true).clicked() {
+            *act = Some(*a);
         }
-        icons::paint(ui.painter(), icon, Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), KEY_TEXT);
-    }
-    ui.add_space(gap);
-    // Row 2: previous, pause, stop, next
-    let (row, _) = ui.allocate_exact_size(vec2(w, kh), Sense::hover());
-    let q = (w - 3.0 * gap) / 4.0;
-    for (i, (id, icon, act)) in [("prev", Icon::Prev, "prev"), ("pause", Icon::Pause, "pause"), ("stop", Icon::Stop, "stop"), ("next", Icon::Next, "next")]
-        .into_iter()
-        .enumerate()
-    {
-        let rect = Rect::from_min_size(row.min + vec2(i as f32 * (q + gap), 0.0), vec2(q, kh));
-        if key_rect(ui, id, rect, 5.0, true).clicked() {
-            action = Some(act);
-        }
-        icons::paint(ui.painter(), icon, Rect::from_center_size(rect.center(), vec2(18.0, 18.0)), KEY_TEXT);
-    }
-    ui.add_space(gap + 4.0);
-    // Rows 3-4: SUBTITLE / mute on the left, volume rocker in the middle, AUDIO on the right.
-    let (block, _) = ui.allocate_exact_size(vec2(w, kh * 2.0 + gap), Sense::hover());
-    let colw = (w - 2.0 * gap) / 3.0;
-    let left = Rect::from_min_size(block.min, vec2(colw, kh));
-    let mute = Rect::from_min_size(block.min + vec2(0.0, kh + gap), vec2(colw, kh));
-    let rocker = Rect::from_min_size(block.min + vec2(colw + gap, 0.0), vec2(colw, kh * 2.0 + gap));
-    let audio = Rect::from_min_size(block.min + vec2(2.0 * (colw + gap), 0.0), vec2(colw, kh));
-    if key_rect(ui, "subtitle", left, 5.0, true).on_hover_text("Subtitles on / next language").clicked() {
-        action = Some("subtitle");
-    }
-    key_label(ui, left.center(), Align2::CENTER_CENTER, "SUBTITLE", 11.0, true);
-    if key_rect(ui, "audio", audio, 5.0, true).on_hover_text("Next audio language / format").clicked() {
-        action = Some("audio");
-    }
-    key_label(ui, audio.center(), Align2::CENTER_CENTER, "AUDIO", 11.0, true);
-    if key_rect(ui, "mute", mute, 5.0, true).on_hover_text("Mute").clicked() {
-        action = Some("mute");
-    }
-    icons::paint(ui.painter(), if app.muted { Icon::Mute } else { Icon::Volume }, Rect::from_center_size(mute.center(), vec2(18.0, 18.0)), KEY_TEXT);
-    // Rocker: top half volume up, bottom half volume down.
-    ui.painter().rect_filled(rocker, 6.0, KEY);
-    ui.painter().rect_stroke(rocker, 6.0, Stroke::new(1.0, Color32::from_rgb(8, 8, 8)), egui::StrokeKind::Inside);
-    let up = Rect::from_min_max(rocker.min, pos2(rocker.right(), rocker.center().y));
-    let down = Rect::from_min_max(pos2(rocker.left(), rocker.center().y), rocker.max);
-    let ur = ui.interact(up, ui.scope_id().with("vol_up"), Sense::click());
-    let dr = ui.interact(down, ui.scope_id().with("vol_down"), Sense::click());
-    for (r, rr) in [(&ur, up), (&dr, down)] {
-        if r.hovered() {
-            ui.painter().rect_filled(rr.shrink(2.0), 5.0, KEY_HOVER);
+        match icon {
+            Some(ic) => icons::paint(ui.painter(), *ic, Rect::from_center_size(rect.center(), vec2(18.0, 18.0) * s), KEY_TEXT),
+            None => key_label(ui, rect.center(), Align2::CENTER_CENTER, label, 11.0 * s, true),
         }
     }
-    key_label(ui, up.center() - vec2(0.0, 6.0), Align2::CENTER_CENTER, "+", 22.0, true);
-    key_label(ui, rocker.center(), Align2::CENTER_CENTER, "VOL", 10.0, true);
-    key_label(ui, down.center() + vec2(0.0, 6.0), Align2::CENTER_CENTER, "−", 22.0, true);
-    if ur.on_hover_text("Volume up").clicked() {
-        action = Some("vol_up");
-    }
-    if dr.on_hover_text("Volume down").clicked() {
-        action = Some("vol_down");
-    }
+}
 
-    if !on {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Menu keys work while a DVD or Blu-ray plays with its menus.").size(11.0).color(TEXT_DIM));
+fn remote_ui(app: &mut App, ui: &mut Ui) {
+    let on = app.nav.is_some();
+    let s = app.settings.remote_scale.clamp(0.5, 2.5);
+    let mini = app.settings.remote_mini;
+    let w = remote_base_w(mini) * s;
+    ui.set_width(w);
+    ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
+    let top = ui.cursor().min;
+
+    // Header strip: drag it out of the window to pop the remote out; size and layout buttons.
+    let (strip, strip_resp) = ui.allocate_exact_size(vec2(w, 12.0), Sense::click_and_drag());
+    ui.painter().rect_filled(Rect::from_center_size(strip.center(), vec2(40.0, 4.0)), 2.0, Color32::from_rgb(90, 90, 96));
+    if strip_resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
+    if strip_resp.drag_started() {
+        if app.remote_floating {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        } else {
+            // Pop out where the pointer is, so it can be carried outside PlayCraft.
+            let outer = ui.ctx().input(|i| i.viewport().inner_rect).map(|r| r.min).unwrap_or_default();
+            let pointer = ui.ctx().input(|i| i.pointer.interact_pos()).unwrap_or_default();
+            app.pop_out_remote(Some(outer + pointer.to_vec2() - vec2(20.0, 12.0)));
+        }
+    }
+    let strip_resp = strip_resp.on_hover_text(if app.remote_floating { "Drag to move the remote" } else { "Drag out to pop the remote out of PlayCraft" });
+    drop(strip_resp);
+    // Size, layout, pop-out and close buttons (wrap onto two lines on a small remote).
+    ui.horizontal_wrapped(|header| {
+        header.set_max_width(w);
+        header.spacing_mut().item_spacing = vec2(3.0, 3.0);
+        if header.small_button("−").on_hover_text("Smaller remote").clicked() {
+            app.settings.remote_scale = (s - 0.15).max(0.5);
+            app.remote_resize_to = Some(());
+            app.settings.save();
+        }
+        if header.small_button("+").on_hover_text("Bigger remote").clicked() {
+            app.settings.remote_scale = (s + 0.15).min(2.5);
+            app.remote_resize_to = Some(());
+            app.settings.save();
+        }
+        let mini_label = if mini { "Full" } else { "Mini" };
+        if header.small_button(mini_label).on_hover_text("Switch between the full and mini remote").clicked() {
+            app.settings.remote_mini = !mini;
+            app.remote_resize_to = Some(());
+            app.settings.save();
+        }
+        let pop = if app.remote_floating { "Dock" } else { "Out" };
+        let pop_tip = if app.remote_floating { "Put the remote back above the bar" } else { "Pop out into its own window you can move anywhere" };
+        if header.small_button(pop).on_hover_text(pop_tip).clicked() {
+            if app.remote_floating {
+                app.remote_floating = false;
+            } else {
+                app.pop_out_remote(None);
+            }
+        }
+        if header.small_button("✕").on_hover_text("Close the remote").clicked() {
+            app.remote_open = false;
+            app.remote_floating = false;
+        }
+    });
+    ui.add_space(6.0 * s);
+
+    let mut act: Option<RemoteAct> = None;
+    let gap = 8.0 * s;
+    let kh = 30.0 * s;
+    if mini {
+        remote_pad(app, ui, w, false, &mut act);
+        ui.add_space(gap);
+        key_row(
+            ui,
+            w,
+            kh,
+            gap,
+            &[
+                ("m_menu", None, "MENU", RemoteAct::Nav(crate::nav::NavInput::TitleMenu)),
+                ("m_ret", None, "BACK", RemoteAct::Nav(crate::nav::NavInput::Return)),
+            ],
+            s,
+            &mut act,
+        );
+        ui.add_space(gap);
+        key_row(
+            ui,
+            w,
+            kh,
+            gap,
+            &[
+                ("m_play", Some(if app.current.is_some() && !app.paused { Icon::Pause } else { Icon::Play }), "", RemoteAct::PlayPause),
+                ("m_stop", Some(Icon::Stop), "", RemoteAct::Stop),
+            ],
+            s,
+            &mut act,
+        );
+        ui.add_space(gap);
+        key_row(
+            ui,
+            w,
+            kh,
+            gap,
+            &[
+                ("m_vdown", None, "−", RemoteAct::VolDown),
+                ("m_mute", Some(Icon::Mute), "", RemoteAct::Mute),
+                ("m_vup", None, "+", RemoteAct::VolUp),
+            ],
+            s,
+            &mut act,
+        );
+    } else {
+        remote_pad(app, ui, w, true, &mut act);
+        // HOME
+        ui.add_space(10.0 * s);
+        let (row, _) = ui.allocate_exact_size(vec2(w, 32.0 * s), Sense::hover());
+        let home = Rect::from_center_size(row.center(), vec2(w * 0.55, 30.0 * s));
+        let hr = ui.interact(home, ui.scope_id().with("home"), Sense::click());
+        let fill = if hr.hovered() { Color32::from_rgb(140, 150, 214) } else { Color32::from_rgb(118, 128, 196) };
+        ui.painter().rect_filled(home, 5.0 * s, fill);
+        ui.painter().text(home.center(), Align2::CENTER_CENTER, "HOME", FontId::proportional(16.0 * s), Color32::WHITE);
+        if hr.on_hover_text("Back to the PlayCraft home page").clicked() {
+            act = Some(RemoteAct::Home);
+        }
+        ui.add_space(14.0 * s);
+        // Rewind, play (wide), fast forward
+        let (row, _) = ui.allocate_exact_size(vec2(w, kh), Sense::hover());
+        let side = (w - 2.0 * gap) * 0.27;
+        let mid = w - 2.0 * gap - 2.0 * side;
+        let keys = [
+            ("rew", Rect::from_min_size(row.min, vec2(side, kh)), Icon::Rewind, RemoteAct::Back),
+            ("play", Rect::from_min_size(row.min + vec2(side + gap, 0.0), vec2(mid, kh)), Icon::Play, RemoteAct::Play),
+            ("ff", Rect::from_min_size(row.min + vec2(side + gap + mid + gap, 0.0), vec2(side, kh)), Icon::Forward, RemoteAct::Fwd),
+        ];
+        for (id, rect, icon, a) in keys {
+            if key_rect(ui, id, rect, 5.0 * s, true).clicked() {
+                act = Some(a);
+            }
+            icons::paint(ui.painter(), icon, Rect::from_center_size(rect.center(), vec2(20.0, 20.0) * s), KEY_TEXT);
+        }
+        ui.add_space(gap);
+        key_row(
+            ui,
+            w,
+            kh,
+            gap,
+            &[
+                ("prev", Some(Icon::Prev), "", RemoteAct::Prev),
+                ("pause", Some(Icon::Pause), "", RemoteAct::Pause),
+                ("stop", Some(Icon::Stop), "", RemoteAct::Stop),
+                ("next", Some(Icon::Next), "", RemoteAct::Next),
+            ],
+            s,
+            &mut act,
+        );
+        ui.add_space(gap + 4.0 * s);
+        // SUBTITLE / mute, volume rocker, AUDIO
+        let (block, _) = ui.allocate_exact_size(vec2(w, kh * 2.0 + gap), Sense::hover());
+        let colw = (w - 2.0 * gap) / 3.0;
+        let left = Rect::from_min_size(block.min, vec2(colw, kh));
+        let mute = Rect::from_min_size(block.min + vec2(0.0, kh + gap), vec2(colw, kh));
+        let rocker = Rect::from_min_size(block.min + vec2(colw + gap, 0.0), vec2(colw, kh * 2.0 + gap));
+        let audio = Rect::from_min_size(block.min + vec2(2.0 * (colw + gap), 0.0), vec2(colw, kh));
+        if key_rect(ui, "subtitle", left, 5.0 * s, true).on_hover_text("Subtitles on / next language").clicked() {
+            act = Some(RemoteAct::Subtitle);
+        }
+        key_label(ui, left.center(), Align2::CENTER_CENTER, "SUBTITLE", 11.0 * s, true);
+        if key_rect(ui, "audio", audio, 5.0 * s, true).on_hover_text("Next audio language / format").clicked() {
+            act = Some(RemoteAct::Audio);
+        }
+        key_label(ui, audio.center(), Align2::CENTER_CENTER, "AUDIO", 11.0 * s, true);
+        if key_rect(ui, "mute", mute, 5.0 * s, true).on_hover_text("Mute").clicked() {
+            act = Some(RemoteAct::Mute);
+        }
+        icons::paint(ui.painter(), Icon::Mute, Rect::from_center_size(mute.center(), vec2(18.0, 18.0) * s), KEY_TEXT);
+        ui.painter().rect_filled(rocker, 6.0 * s, KEY);
+        ui.painter().rect_stroke(rocker, 6.0 * s, Stroke::new(1.0, Color32::from_rgb(8, 8, 8)), egui::StrokeKind::Inside);
+        let up = Rect::from_min_max(rocker.min, pos2(rocker.right(), rocker.center().y));
+        let down = Rect::from_min_max(pos2(rocker.left(), rocker.center().y), rocker.max);
+        let ur = ui.interact(up, ui.scope_id().with("vol_up"), Sense::click());
+        let dr = ui.interact(down, ui.scope_id().with("vol_down"), Sense::click());
+        for (r, rr) in [(&ur, up), (&dr, down)] {
+            if r.hovered() {
+                ui.painter().rect_filled(rr.shrink(2.0), 5.0 * s, KEY_HOVER);
+            }
+        }
+        key_label(ui, up.center() - vec2(0.0, 6.0 * s), Align2::CENTER_CENTER, "+", 22.0 * s, true);
+        key_label(ui, rocker.center(), Align2::CENTER_CENTER, "VOL", 10.0 * s, true);
+        key_label(ui, down.center() + vec2(0.0, 6.0 * s), Align2::CENTER_CENTER, "−", 22.0 * s, true);
+        if ur.on_hover_text("Volume up").clicked() {
+            act = Some(RemoteAct::VolUp);
+        }
+        if dr.on_hover_text("Volume down").clicked() {
+            act = Some(RemoteAct::VolDown);
+        }
+        // Which volume the remote controls.
+        ui.add_space(8.0 * s);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Volume keys:").size(11.0 * s.max(0.8)).color(TEXT_DIM));
+            if ui.selectable_label(app.settings.remote_pc_volume, RichText::new("Computer").size(11.0 * s.max(0.8))).on_hover_text("Change the computer's own volume and mute").clicked() {
+                app.settings.remote_pc_volume = true;
+                app.settings.save();
+            }
+            if ui.selectable_label(!app.settings.remote_pc_volume, RichText::new("PlayCraft").size(11.0 * s.max(0.8))).on_hover_text("Change only PlayCraft's volume").clicked() {
+                app.settings.remote_pc_volume = false;
+                app.settings.save();
+            }
+        });
+        if !on {
+            ui.label(RichText::new("Menu keys work while a DVD or Blu-ray plays with its menus.").size(11.0 * s.max(0.8)).color(TEXT_DIM));
+        }
+    }
+    app.remote_content = Some(ui.cursor().min - top + vec2(w, 0.0));
 
     // ---- Do what was pressed ----
-    if let Some(i) = input {
-        app.nav_input(i);
-        app.page = Page::NowPlaying;
-    }
-    match action {
-        Some("home") => app.page = Page::Home,
-        Some("play") => {
+    let playing = app.current.is_some();
+    let pc = app.settings.remote_pc_volume;
+    match act {
+        Some(RemoteAct::Nav(i)) => {
+            app.nav_input(i);
+            app.page = Page::NowPlaying;
+        }
+        Some(RemoteAct::Home) => app.page = Page::Home,
+        Some(RemoteAct::Play) => {
             if !playing || app.paused {
                 app.toggle_pause();
             }
         }
-        Some("pause") => {
+        Some(RemoteAct::Pause) => {
             if playing && !app.paused {
                 app.toggle_pause();
             }
         }
-        Some("play_pause") => app.toggle_pause(),
-        Some("stop") => app.stop(),
-        Some("back") => app.seek_rel(-10.0),
-        Some("fwd") => app.seek_rel(30.0),
-        Some("prev") => app.chapter_step(-1),
-        Some("next") => app.chapter_step(1),
-        Some("vol_up") => {
-            app.set_volume(app.settings.volume + 5.0);
-            app.settings.save();
+        Some(RemoteAct::PlayPause) => app.toggle_pause(),
+        Some(RemoteAct::Stop) => app.stop(),
+        Some(RemoteAct::Back) => app.seek_rel(-10.0),
+        Some(RemoteAct::Fwd) => app.seek_rel(30.0),
+        Some(RemoteAct::Prev) => app.chapter_step(-1),
+        Some(RemoteAct::Next) => app.chapter_step(1),
+        Some(RemoteAct::VolUp | RemoteAct::VolDown) => {
+            let up = act == Some(RemoteAct::VolUp);
+            if pc {
+                crate::sysvol::step(up);
+            } else {
+                app.set_volume(app.settings.volume + if up { 5.0 } else { -5.0 });
+                app.settings.save();
+            }
         }
-        Some("vol_down") => {
-            app.set_volume(app.settings.volume - 5.0);
-            app.settings.save();
-        }
-        Some("mute") => {
-            if let Some(p) = &app.player {
+        Some(RemoteAct::Mute) => {
+            if pc {
+                crate::sysvol::toggle_mute();
+            } else if let Some(p) = &app.player {
                 let _ = p.command(&["cycle", "mute"]);
             }
         }
-        Some("audio") => {
+        Some(RemoteAct::Audio) => {
             if let Some(p) = &app.player {
                 let _ = p.command(&["cycle", "audio"]);
             }
             app.last_track_poll = Instant::now() - Duration::from_secs(5);
         }
-        Some("subtitle") => {
+        Some(RemoteAct::Subtitle) => {
             if let Some(n) = app.nav.clone() {
                 let on = !n.shared.show_subs.load(std::sync::atomic::Ordering::Acquire);
                 n.set_show_subs(on);
@@ -932,7 +1116,7 @@ fn remote_ui(app: &mut App, ui: &mut Ui) {
                 app.last_track_poll = Instant::now() - Duration::from_secs(5);
             }
         }
-        _ => {}
+        None => {}
     }
 }
 
