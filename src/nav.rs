@@ -25,6 +25,8 @@ pub enum NavInput {
     Enter,
     Menu,
     Popup,
+    TitleMenu,
+    Return,
     MouseMove(f32, f32),
     MouseClick(f32, f32),
     Chapter(i32),
@@ -151,6 +153,7 @@ struct DvdLib {
     sector_search: unsafe extern "C" fn(P, i64, i32) -> c_int,
     next_pg: unsafe extern "C" fn(P) -> c_int,
     prev_pg: unsafe extern "C" fn(P) -> c_int,
+    go_up: unsafe extern "C" fn(P) -> c_int,
 }
 
 impl DvdLib {
@@ -189,6 +192,7 @@ impl DvdLib {
             sector_search: sym!(lib, "dvdnav_sector_search"),
             next_pg: sym!(lib, "dvdnav_next_pg_search"),
             prev_pg: sym!(lib, "dvdnav_prev_pg_search"),
+            go_up: sym!(lib, "dvdnav_go_up"),
             _lib: lib,
         })
     }
@@ -773,6 +777,17 @@ impl Dvd {
                     }
                     restart = true;
                 }
+                NavInput::TitleMenu => {
+                    if (lib.menu_call)(self.nav, 2) != 1 {
+                        (lib.menu_call)(self.nav, 3);
+                    }
+                    restart = true;
+                }
+                NavInput::Return => {
+                    if (lib.go_up)(self.nav) == 1 {
+                        restart = true;
+                    }
+                }
                 NavInput::Chapter(d) => {
                     if d > 0 {
                         (lib.next_pg)(self.nav);
@@ -891,12 +906,15 @@ unsafe extern "C" fn bd_overlay_cb(handle: P, ov: *const BdOverlay) {
                     let rgb = ycrcb_to_rgb(yy, cr, cb, true);
                     let end = (x + e.len as usize).min(w);
                     let py = oy + y;
-                    if py < p.h && t > 0 {
+                    // Write every pixel, transparent ones too: a button redrawn in its
+                    // normal state must erase its old highlight.
+                    if py < p.h {
+                        let px_val = if t > 0 { [rgb[0], rgb[1], rgb[2], t] } else { [0, 0, 0, 0] };
                         for xx in x..end {
                             let px = ox + xx;
                             if px < p.w {
                                 let o = (py * p.w + px) * 4;
-                                p.rgba[o..o + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], t]);
+                                p.rgba[o..o + 4].copy_from_slice(&px_val);
                             }
                         }
                     }
@@ -1081,6 +1099,20 @@ impl Bd {
                 }
                 NavInput::Popup => {
                     (lib.user_input)(self.bd, -1, 11);
+                }
+                NavInput::TitleMenu => {
+                    (lib.menu_call)(self.bd, -1);
+                    restart = true;
+                }
+                NavInput::Return => {
+                    // Blu-ray remotes' Return closes an open pop-up menu, otherwise
+                    // goes back to the disc's main menu.
+                    if shared.popup.load(Ordering::Acquire) && shared.in_menu.load(Ordering::Acquire) {
+                        (lib.user_input)(self.bd, -1, 11);
+                    } else {
+                        (lib.menu_call)(self.bd, -1);
+                        restart = true;
+                    }
                 }
                 NavInput::MouseMove(x, y) => {
                     (lib.mouse_select)(self.bd, -1, x.max(0.0) as u16, y.max(0.0) as u16);

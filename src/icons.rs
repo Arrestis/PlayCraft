@@ -38,6 +38,7 @@ pub enum Icon {
     Drive,
     Download,
     Video,
+    Remote,
 }
 
 fn tri(p: &Painter, pts: [Pos2; 3], c: Color32) {
@@ -277,6 +278,15 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, c: Color32) {
             let body = Rect::from_min_max(pos2(r.left(), r.top() + h * 0.2), pos2(r.left() + w * 0.66, r.bottom() - h * 0.2));
             p.rect_filled(body, 2.0, c);
             tri(p, [pos2(r.left() + w * 0.62, ctr.y), pos2(r.right(), r.top() + h * 0.22), pos2(r.right(), r.bottom() - h * 0.22)], c);
+        }
+        Icon::Remote => {
+            let body = Rect::from_center_size(ctr, vec2(w * 0.5, h));
+            p.rect_stroke(body, w * 0.12, st, egui::StrokeKind::Middle);
+            p.circle_filled(pos2(ctr.x, body.top() + h * 0.28), w * 0.11, c);
+            for k in [0.55f32, 0.72, 0.89] {
+                p.circle_filled(pos2(ctr.x - w * 0.1, body.top() + h * k), w * 0.045, c);
+                p.circle_filled(pos2(ctr.x + w * 0.1, body.top() + h * k), w * 0.045, c);
+            }
         }
         Icon::Info => {
             p.circle_stroke(ctr, w * 0.5, st);

@@ -227,6 +227,9 @@ pub struct App {
     pub nav_frame: (f32, f32),
     pub nav_fraction: f64,
     pub nav_video_rect: Option<Rect>,
+    pub remote_open: bool,
+    pub remote_floating: bool,
+    pub remote_anchor: Option<Rect>,
     pub nav_last_mouse: Option<egui::Pos2>,
     pub aacs_rx: Option<Receiver<InstallMsg>>,
     pub aacs_status: String,
@@ -324,6 +327,9 @@ impl App {
             nav_frame: (0.0, 0.0),
             nav_fraction: 0.0,
             nav_video_rect: None,
+            remote_open: false,
+            remote_floating: false,
+            remote_anchor: None,
             nav_last_mouse: None,
             aacs_rx: None,
             aacs_status: String::new(),
@@ -1201,6 +1207,22 @@ impl App {
                 eprintln!("[menus] test: pressing Enter (in menu: {})", n.shared.in_menu.load(Ordering::Acquire));
                 n.input(crate::nav::NavInput::Enter);
             }
+        }
+        // PLAYCRAFT_TEST_MOUSE="frame:x:y;frame:x:y" moves the pointer over menu buttons
+        // (disc picture coordinates); PLAYCRAFT_TEST_REMOTE=1 opens the remote.
+        if let Ok(seq) = std::env::var("PLAYCRAFT_TEST_MOUSE") {
+            for step in seq.split(';') {
+                let v: Vec<f32> = step.split(':').filter_map(|s| s.parse().ok()).collect();
+                if v.len() == 3 && v[0] as u32 == frames {
+                    if let Some(n) = &self.nav {
+                        eprintln!("[menus] test: pointer at {},{}", v[1], v[2]);
+                        n.input(crate::nav::NavInput::MouseMove(v[1], v[2]));
+                    }
+                }
+            }
+        }
+        if frames == 5 && std::env::var("PLAYCRAFT_TEST_REMOTE").is_ok() {
+            self.remote_open = true;
         }
         let Some(job) = &mut self.screenshot else { return };
         let target = SCREENSHOT_FRAMES.load(Ordering::Relaxed);

@@ -74,6 +74,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         });
     });
     url_dialog(app, &ctx);
+    remote(app, &ctx);
     draw_toast(app, &ctx);
     app.screenshot_tick(&ctx);
 }
@@ -576,6 +577,148 @@ fn control_bar(app: &mut App, ui: &mut Ui) {
             app.set_fullscreen(&ctx, fs);
         }
     });
+
+    // Remote control for disc menus, at the right-hand end of the bar.
+    let r = Rect::from_center_size(pos2(full.right() - 22.0, row.center().y), vec2(34.0, 34.0));
+    ui.scope_builder(UiBuilder::new().max_rect(r), |ui| {
+        if icons::button(ui, Icon::Remote, 34.0, "Remote: disc menu buttons and arrows", app.remote_open).clicked() {
+            app.remote_open = !app.remote_open;
+        }
+    });
+    app.remote_anchor = Some(r);
+}
+
+/// The remote panel: docked above its button in the bar, or popped out as a window.
+fn remote(app: &mut App, ctx: &egui::Context) {
+    if !app.remote_open {
+        return;
+    }
+    let mut open = true;
+    if app.remote_floating {
+        egui::Window::new("Remote")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(ctx.content_rect().right_bottom() - vec2(260.0, 420.0))
+            .show(ctx, |ui| remote_ui(app, ui));
+    } else {
+        let bottom = app.remote_anchor.map(|r| r.top() - 10.0).unwrap_or(ctx.content_rect().bottom() - 100.0);
+        let right = ctx.content_rect().right() - 10.0;
+        egui::Area::new(egui::Id::unique("remote_dock"))
+            .order(egui::Order::Foreground)
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(pos2(right, bottom))
+            .show(ctx, |ui| {
+                Frame::new()
+                    .fill(Color32::from_rgb(38, 38, 38))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
+                    .corner_radius(10.0)
+                    .inner_margin(Margin::same(12))
+                    .show(ui, |ui| remote_ui(app, ui));
+            });
+    }
+    if !open {
+        app.remote_open = false;
+    }
+}
+
+fn remote_key(ui: &mut Ui, label: &str, w: f32, enabled: bool) -> bool {
+    ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(13.0)).min_size(vec2(w, 30.0)).corner_radius(6.0)).clicked()
+}
+
+fn arrow_key(ui: &mut Ui, dir: u8, enabled: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), if enabled { Sense::click() } else { Sense::hover() });
+    let fill = if !enabled {
+        Color32::from_rgb(44, 44, 44)
+    } else if resp.is_pointer_button_down_on() {
+        ACCENT
+    } else if resp.hovered() {
+        Color32::from_rgb(76, 76, 76)
+    } else {
+        Color32::from_rgb(58, 58, 58)
+    };
+    ui.painter().rect_filled(rect, 8.0, fill);
+    let c = rect.center();
+    let s = 9.0;
+    let pts = match dir {
+        0 => [pos2(c.x, c.y - s), pos2(c.x + s, c.y + s * 0.6), pos2(c.x - s, c.y + s * 0.6)],
+        1 => [pos2(c.x, c.y + s), pos2(c.x - s, c.y - s * 0.6), pos2(c.x + s, c.y - s * 0.6)],
+        2 => [pos2(c.x - s, c.y), pos2(c.x + s * 0.6, c.y - s), pos2(c.x + s * 0.6, c.y + s)],
+        _ => [pos2(c.x + s, c.y), pos2(c.x - s * 0.6, c.y + s), pos2(c.x - s * 0.6, c.y - s)],
+    };
+    let col = if enabled { Color32::WHITE } else { TEXT_DIM };
+    ui.painter().add(egui::Shape::convex_polygon(pts.to_vec(), col, Stroke::NONE));
+    resp.clicked()
+}
+
+fn remote_ui(app: &mut App, ui: &mut Ui) {
+    use crate::nav::NavInput;
+    let on = app.nav.is_some();
+    ui.set_width(196.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Remote").strong().color(TEXT));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let tip = if app.remote_floating { "Dock it back to the bar" } else { "Pop out into its own window" };
+            if ui.small_button(if app.remote_floating { "Dock" } else { "Pop out" }).on_hover_text(tip).clicked() {
+                app.remote_floating = !app.remote_floating;
+            }
+        });
+    });
+    ui.add_space(4.0);
+    let mut input = None;
+    ui.horizontal(|ui| {
+        if remote_key(ui, "Title menu", 94.0, on) {
+            input = Some(NavInput::TitleMenu);
+        }
+        if remote_key(ui, "Pop-up menu", 94.0, on) {
+            input = Some(NavInput::Popup);
+        }
+    });
+    ui.add_space(6.0);
+    // Direction pad with Select in the middle.
+    ui.vertical_centered(|ui| {
+        if arrow_key(ui, 0, on) {
+            input = Some(NavInput::Up);
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(10.0);
+        if arrow_key(ui, 2, on) {
+            input = Some(NavInput::Left);
+        }
+        let (rect, resp) = ui.allocate_exact_size(vec2(64.0, 44.0), if on { Sense::click() } else { Sense::hover() });
+        let fill = if !on { Color32::from_rgb(44, 44, 44) } else if resp.hovered() { ACCENT_HOVER } else { ACCENT };
+        ui.painter().rect_filled(rect, 22.0, fill);
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, "Select", FontId::proportional(13.0), if on { Color32::WHITE } else { TEXT_DIM });
+        if resp.on_hover_text("Choose the highlighted button (Enter)").clicked() {
+            input = Some(NavInput::Enter);
+        }
+        if arrow_key(ui, 3, on) {
+            input = Some(NavInput::Right);
+        }
+    });
+    ui.vertical_centered(|ui| {
+        if arrow_key(ui, 1, on) {
+            input = Some(NavInput::Down);
+        }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if remote_key(ui, "Return", 94.0, on) {
+            input = Some(NavInput::Return);
+        }
+        if remote_key(ui, "Menu", 94.0, on) {
+            input = Some(NavInput::Menu);
+        }
+    });
+    if !on {
+        ui.add_space(4.0);
+        ui.label(RichText::new("Works while a DVD or Blu-ray is playing with its menus.").size(11.0).color(TEXT_DIM));
+    }
+    if let Some(i) = input {
+        app.nav_input(i);
+        app.page = Page::NowPlaying;
+    }
 }
 
 fn seek_bar(app: &mut App, ui: &mut Ui) {
