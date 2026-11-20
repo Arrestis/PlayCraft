@@ -73,6 +73,9 @@ impl NavShared {
 
 fn engine_dirs() -> Vec<PathBuf> {
     let mut d = Vec::new();
+    if let Some(e) = crate::embed::dir() {
+        d.push(e);
+    }
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         d.push(dir.join("engine"));
         d.push(dir.join("..").join("lib"));

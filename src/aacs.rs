@@ -22,6 +22,9 @@ fn candidates() -> Vec<PathBuf> {
         c.push(p.with_extension(ext));
         c.push(p);
     }
+    if let Some(d) = crate::embed::dir() {
+        c.push(d.join(format!("libaacs.{ext}")));
+    }
     if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("engine"))) {
         c.push(d.join(format!("libaacs.{ext}")));
     }

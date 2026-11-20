@@ -28,8 +28,9 @@ Start menu and the desktop. To remove it, use *Settings › Apps*.
 1. Unzip it anywhere: Desktop, Documents or a USB stick.
 2. Run `PlayCraft\playcraft.exe`.
 
-Keep the `engine` folder next to `playcraft.exe`. It holds the playback engine (FFmpeg)
-and the DVD and Blu-ray libraries.
+The playback engine (FFmpeg) and the DVD and Blu-ray libraries are built into `playcraft.exe`.
+The first start takes a few seconds longer while PlayCraft unpacks them.
+
 
 If Windows SmartScreen warns about an unknown app, choose **More info › Run anyway**.
 PlayCraft isn't code-signed yet.

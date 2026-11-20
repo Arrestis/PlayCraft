@@ -3,6 +3,23 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-11-20
+
+### Changed
+- **The playback engine is built into the program.** On Windows, `playcraft.exe` now carries
+  libmpv (FFmpeg), libbluray, libdvdnav, libdvdread, libdvdcss, libaacs and libbdplus inside
+  itself. The portable download is a single program with no `engine` folder to keep beside it
+  or lose. On first start, PlayCraft unpacks the engine to
+  `%LOCALAPPDATA%\PlayCraft\runtime\<processor>-<id>\`. Each version and processor gets its own
+  folder, so a copy for another version or processor is never used.
+- **Fewer libraries.** The build keeps only the libraries something actually uses: 25 instead
+  of 49 on 64-bit Windows.
+
+### Fixed
+- "The codec engine is not installed yet … LoadLibraryExW failed": PlayCraft skips engine files
+  built for a different processor, explains which one it found, and lists every place it
+  looked. *Install codec engine* downloads the engine for PlayCraft's own processor.
+- Windows builds no longer need the Microsoft Visual C++ runtime.
 ## [0.2.0] - 2026-11-20
 
 ### Added

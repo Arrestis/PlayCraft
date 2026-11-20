@@ -293,7 +293,8 @@ impl App {
         // Let the Blu-ray library find helper libraries placed next to the engine.
         // The bundled engine folder next to the program comes first.
         // A libaacs the person downloaded from Settings (user folder) wins over the bundled one.
-        let mut extra: Vec<PathBuf> = vec![library::engine_dir()];
+        let mut extra: Vec<PathBuf> = crate::embed::dir().into_iter().collect();
+        extra.push(library::engine_dir());
         if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("engine"))) {
             extra.push(d);
         }

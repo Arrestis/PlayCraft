@@ -61,10 +61,14 @@ fn main() {
     embed_icon();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PLAYCRAFT_SKIP_ENGINE");
+    println!("cargo:rerun-if-env-changed=PLAYCRAFT_EMBED_ENGINE");
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    // The packed engine built into playcraft.exe (empty unless a Windows release build).
+    let _ = std::fs::write(out.join("engine.pack"), b"");
+    let _ = std::fs::write(out.join("engine.id"), "none");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || std::env::var_os("PLAYCRAFT_SKIP_ENGINE").is_some() {
         return;
     }
-    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     // OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out (newer Cargo adds another level:
     // <target>/<profile>/build/<pkg>/<hash>/out). The program sits next to that "build" folder.
     let Some(exe_dir) = out
@@ -75,6 +79,8 @@ fn main() {
     else {
         return;
     };
+    // A small icon file next to the program, for the Windows installer's shortcuts.
+    let _ = std::fs::copy(out.join("app.ico"), exe_dir.join("playcraft.ico"));
     let engine = exe_dir.join("engine");
     let _ = std::fs::create_dir_all(&engine);
     let work = out.join("downloads");
@@ -117,6 +123,138 @@ fn main() {
             Err(e) => println!("cargo:warning=Could not bundle the disc libraries ({e})."),
         }
     }
+
+    // Keep only the libraries something actually uses.
+    let removed = prune_engine(&engine);
+    if removed > 0 {
+        println!("cargo:warning=Removed {removed} unused engine libraries");
+    }
+
+    // Release builds carry the whole engine inside playcraft.exe, so the program is one file.
+    let release = std::env::var("PROFILE").as_deref() == Ok("release");
+    let wanted = std::env::var("PLAYCRAFT_EMBED_ENGINE").map(|v| v != "0").unwrap_or(release);
+    // A marker next to the program tells the packaging script the engine is inside it.
+    let marker = exe_dir.join("engine-embedded.txt");
+    let _ = std::fs::remove_file(&marker);
+    if wanted && engine.join("libmpv-2.dll").exists() {
+        match pack_engine(&engine, &out) {
+            Ok((files, bytes)) => {
+                println!("cargo:warning=Built {files} engine libraries into the program ({} MB packed)", bytes / 1_048_576);
+                let _ = std::fs::write(&marker, format!("{files} engine libraries are built into playcraft.exe\n"));
+            }
+            Err(e) => println!("cargo:warning=Could not build the engine into the program ({e}); it stays in the engine folder."),
+        }
+    }
+}
+
+/// The DLL names a Windows library imports (from its PE import table).
+fn pe_imports(path: &Path) -> Vec<String> {
+    let Ok(b) = std::fs::read(path) else { return Vec::new() };
+    let rd16 = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize).unwrap_or(0);
+    let rd32 = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize).unwrap_or(0);
+    let pe = rd32(0x3c);
+    if b.get(pe..pe + 4) != Some(b"PE\0\0") {
+        return Vec::new();
+    }
+    let nsec = rd16(pe + 6);
+    let opt = pe + 24;
+    let magic = rd16(opt);
+    let dd = if magic == 0x20b { opt + 112 } else { opt + 96 };
+    let imp_rva = rd32(dd + 8);
+    let sec = opt + rd16(pe + 20);
+    let to_off = |rva: usize| -> Option<usize> {
+        (0..nsec).find_map(|i| {
+            let s = sec + 40 * i;
+            let (va, vsz, raw, rsz) = (rd32(s + 12), rd32(s + 8), rd32(s + 20), rd32(s + 16));
+            (rva >= va && rva < va + vsz.max(rsz)).then(|| rva - va + raw)
+        })
+    };
+    let mut names = Vec::new();
+    let Some(mut o) = to_off(imp_rva) else { return names };
+    for _ in 0..512 {
+        let name_rva = rd32(o + 12);
+        if name_rva == 0 {
+            break;
+        }
+        if let Some(n) = to_off(name_rva) {
+            let end = b[n..].iter().position(|&c| c == 0).map(|e| n + e).unwrap_or(n);
+            names.push(String::from_utf8_lossy(&b[n..end]).to_lowercase());
+        }
+        o += 20;
+    }
+    names
+}
+
+/// Remove engine DLLs that neither PlayCraft nor any needed library uses. Returns how many.
+fn prune_engine(engine: &Path) -> usize {
+    let Ok(rd) = std::fs::read_dir(engine) else { return 0 };
+    let dlls: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.to_lowercase().ends_with(".dll"))
+        .collect();
+    // Loaded directly by PlayCraft (or by libbluray / libdvdread at run time).
+    let mut keep: Vec<String> = dlls
+        .iter()
+        .filter(|n| {
+            let l = n.to_lowercase();
+            l == "libmpv-2.dll"
+                || l == "libaacs.dll"
+                || l == "libbdplus.dll"
+                || l.starts_with("libbluray-")
+                || l.starts_with("libdvdnav-")
+                || l.starts_with("libdvdcss-")
+        })
+        .map(|n| n.to_lowercase())
+        .collect();
+    let mut i = 0;
+    while i < keep.len() {
+        for dep in pe_imports(&engine.join(&keep[i])) {
+            if dlls.iter().any(|d| d.to_lowercase() == dep) && !keep.contains(&dep) {
+                keep.push(dep);
+            }
+        }
+        i += 1;
+    }
+    let mut removed = 0;
+    for d in &dlls {
+        if !keep.contains(&d.to_lowercase()) && std::fs::remove_file(engine.join(d)).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Pack every engine file into OUT_DIR/engine.pack (simple format, each file deflated):
+/// "PCENG1", u32 count, then per file: u16 name length, name, u64 size, u64 packed size, data.
+fn pack_engine(engine: &Path, out: &Path) -> Result<(usize, usize), String> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(engine)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+        .collect();
+    files.sort();
+    let mut pack = Vec::with_capacity(64 << 20);
+    pack.extend_from_slice(b"PCENG1");
+    pack.extend_from_slice(&(files.len() as u32).to_le_bytes());
+    let mut id: u64 = 0xcbf2_9ce4_8422_2325;
+    for f in &files {
+        let name = f.file_name().unwrap().to_string_lossy().to_string();
+        let data = std::fs::read(f).map_err(|e| e.to_string())?;
+        let packed = miniz_oxide::deflate::compress_to_vec(&data, 6);
+        pack.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        pack.extend_from_slice(name.as_bytes());
+        pack.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        pack.extend_from_slice(&(packed.len() as u64).to_le_bytes());
+        pack.extend_from_slice(&packed);
+        for b in name.bytes().chain((data.len() as u64).to_le_bytes()).chain(packed.iter().step_by(4096).copied()) {
+            id = (id ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    std::fs::write(out.join("engine.pack"), &pack).map_err(|e| e.to_string())?;
+    std::fs::write(out.join("engine.id"), format!("{id:016x}")).map_err(|e| e.to_string())?;
+    Ok((files.len(), pack.len()))
 }
 
 /// Download MSYS2 (mingw64) packages and everything they depend on, and copy their DLLs

@@ -4,6 +4,7 @@
     Version  - e.g. 0.2.0
     Stage    - folder holding playcraft.exe, engine\ and the documents
     License  - license.rtf shown during setup
+    IconFile - playcraft.ico for the shortcuts and Apps list
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
@@ -16,7 +17,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of PlayCraft is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <Icon Id="PlayCraftIcon" SourceFile="$(Stage)\playcraft.exe" />
+    <Icon Id="PlayCraftIcon" SourceFile="$(IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="PlayCraftIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Arrestis/PlayCraft" />
     <Property Id="ARPHELPLINK" Value="https://github.com/Arrestis/PlayCraft/blob/main/docs/USER_GUIDE.md" />

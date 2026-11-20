@@ -15,15 +15,20 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
 $bin = "target\$Target\release"
 if (-not (Test-Path "$bin\playcraft.exe")) { throw "Build first: cargo build --release --target $Target" }
-if (-not (Test-Path "$bin\engine\libmpv-2.dll")) { throw "The engine folder is missing in $bin; build without PLAYCRAFT_SKIP_ENGINE." }
+# Release builds normally carry the engine inside playcraft.exe (one file); older builds
+# keep it in an engine folder next to the program.
+$embedded = Test-Path "$bin\engine-embedded.txt"
+if (-not $embedded -and -not (Test-Path "$bin\engine\libmpv-2.dll")) { throw "No engine in $bin; build without PLAYCRAFT_SKIP_ENGINE." }
 
 New-Item -ItemType Directory -Force dist | Out-Null
 $stage = "dist\stage-$Arch\PlayCraft"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item "$bin\playcraft.exe" $stage
-Copy-Item -Recurse "$bin\engine" "$stage\engine"
-Get-ChildItem "$stage\engine" -Force -Filter ".*" | Remove-Item -Force
+if (-not $embedded) {
+    Copy-Item -Recurse "$bin\engine" "$stage\engine"
+    Get-ChildItem "$stage\engine" -Force -Filter ".*" | Remove-Item -Force
+}
 Copy-Item README.md, LICENSE, NOTICE.md, CHANGELOG.md $stage
 Copy-Item -Recurse docs "$stage\docs"
 
@@ -50,6 +55,7 @@ if (-not $wix) { throw "WiX is not installed: dotnet tool install --global wix -
 $msi = "dist\$name.msi"
 & wix build packaging\windows\playcraft.wxs -arch $Arch -ext WixToolset.UI.wixext `
     -d "Version=$version" -d "Stage=$((Resolve-Path $stage).Path)" -d "License=$((Resolve-Path $rtf).Path)" `
+    -d "IconFile=$((Resolve-Path "$bin\playcraft.ico").Path)" `
     -o $msi
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
 Remove-Item -Force "dist\$name.wixpdb" -ErrorAction SilentlyContinue

@@ -9,6 +9,7 @@
 mod aacs;
 mod app;
 mod discs;
+mod embed;
 mod icon_mask;
 mod icons;
 mod library;
@@ -50,6 +51,7 @@ fn main() -> eframe::Result<()> {
 
     library::migrate_old_data();
     log::init();
+    embed::prepare();
     if let Some(p) = &screenshot {
         log::info(format!("Screenshot mode: saving the window to {}", p.display()));
     }

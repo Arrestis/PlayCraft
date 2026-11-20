@@ -187,6 +187,10 @@ pub fn library_names() -> &'static [&'static str] {
 /// Folders searched for the engine, most specific first.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    // The engine built into this PlayCraft comes first.
+    if let Some(d) = crate::embed::dir() {
+        dirs.push(d);
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(d) = exe.parent() {
             dirs.push(d.to_path_buf());
