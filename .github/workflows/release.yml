@@ -40,6 +40,22 @@ jobs:
         run: |
           dotnet tool install --global wix --version 5.0.2
           ./scripts/package-windows.ps1 -Target ${{ matrix.target }} -Arch ${{ matrix.arch }}
+      # Prove the portable download works on a clean PC: unzip it into an empty folder,
+      # with a fresh user profile folder, and load the playback engine and disc libraries.
+      - name: Test the download on this clean PC
+        if: matrix.arch != 'arm64'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "clean-pc"
+          New-Item -ItemType Directory -Force "$root/profile", "$root/app" | Out-Null
+          Expand-Archive (Get-Item dist/*-portable.zip).FullName -DestinationPath "$root/app"
+          $exe = (Get-ChildItem "$root/app" -Recurse -Filter playcraft.exe | Select-Object -First 1).FullName
+          Write-Host "System vulkan-1.dll present: $(Test-Path $env:WINDIR\System32\vulkan-1.dll)"
+          $env:LOCALAPPDATA = "$root/profile"
+          $env:PATH = "$env:WINDIR\System32;$env:WINDIR"
+          $p = Start-Process -FilePath $exe -ArgumentList "--check-engine" -Wait -PassThru -NoNewWindow -RedirectStandardOutput "$root/check.txt"
+          Get-Content "$root/check.txt"
+          if ($p.ExitCode -ne 0) { throw "The playback engine did not load on a clean PC" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}

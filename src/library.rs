@@ -425,8 +425,43 @@ pub fn fetch_engine_windows(dest: &Path, say: &dyn Fn(String)) -> Result<String,
         }
     }
     let _ = std::fs::remove_file(&archive);
+
+    // The engine also needs the Vulkan loader (vulkan-1.dll), which many PCs don't have.
+    if !dest.join("vulkan-1.dll").exists() {
+        say("Downloading the Vulkan loader the engine needs…".into());
+        if let Err(e) = fetch_vulkan_loader(dest) {
+            crate::log::warn(format!("Vulkan loader not installed: {e}"));
+        }
+    }
     crate::log::info(format!("Codec engine installed to {}", target.display()));
     Ok(target.display().to_string())
+}
+
+/// Download vulkan-1.dll (the open-source Khronos Vulkan loader, from MSYS2) into `dest`.
+fn fetch_vulkan_loader(dest: &Path) -> Result<(), String> {
+    let (_, env, cpu) = msys_arch();
+    let mirror = format!("https://repo.msys2.org/mingw/{env}/");
+    let index = run_tool("curl.exe", &["-sSfL", "--retry", "4", "-A", "playcraft", &mirror])?;
+    let prefix = format!("mingw-w64-{cpu}-vulkan-loader-");
+    let name = index
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|s| s.split('"').next())
+        .filter(|h| h.starts_with(&prefix) && h.ends_with(".pkg.tar.zst"))
+        .last()
+        .ok_or("the Vulkan loader package wasn't found")?
+        .to_string();
+    let tmp = std::env::temp_dir().join("playcraft-vulkan");
+    let _ = std::fs::create_dir_all(&tmp);
+    let pkg = tmp.join("vulkan-loader.pkg.tar.zst");
+    let pkg_s = pkg.display().to_string();
+    run_tool("curl.exe", &["-sSfL", "--retry", "4", "-A", "playcraft", "-o", &pkg_s, &format!("{mirror}{name}")])?;
+    let tmp_s = tmp.display().to_string();
+    let inner = format!("{env}/bin/vulkan-1.dll");
+    run_tool("tar.exe", &["-xf", &pkg_s, "-C", &tmp_s, &inner])?;
+    std::fs::copy(tmp.join(env).join("bin").join("vulkan-1.dll"), dest.join("vulkan-1.dll")).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(())
 }
 
 /// Download libaacs and libbdplus (built by MSYS2 from VideoLAN's official source releases)

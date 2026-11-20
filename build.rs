@@ -100,7 +100,8 @@ fn main() {
         }
     }
     // Disc navigation (menus) and decryption libraries, with every dependency they need.
-    let marker = engine.join(".disc-libs-v2");
+    // v3: also the Vulkan loader (vulkan-1.dll), which libmpv needs and many PCs lack.
+    let marker = engine.join(".disc-libs-v3");
     // MSYS2 environment and package prefix for each processor.
     let msys = match arch {
         "x86_64" => Some(("mingw64", "x86_64")),
@@ -109,7 +110,7 @@ fn main() {
         _ => None,
     };
     if let (Some((env, cpu)), false) = (msys, marker.exists()) {
-        let mut roots = vec!["libaacs", "libbdplus", "libbluray", "libdvdnav", "libdvdread", "libdvdcss"];
+        let mut roots = vec!["libaacs", "libbdplus", "libbluray", "libdvdnav", "libdvdread", "libdvdcss", "vulkan-loader"];
         if cpu.starts_with("clang") {
             roots.extend(["libc++", "libunwind", "libwinpthread"]);
         } else {

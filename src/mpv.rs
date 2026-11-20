@@ -140,7 +140,7 @@ macro_rules! sym {
 impl Api {
     fn load(path: &Path) -> Result<Api, String> {
         unsafe {
-            let lib = Library::new(path).map_err(|e| {
+            let lib = open_library(path).map_err(|e| {
                 // Include Windows' own reason (e.g. a missing helper DLL or wrong processor).
                 match std::error::Error::source(&e) {
                     Some(src) => format!("{e} ({src})"),
@@ -249,6 +249,75 @@ fn wrong_processor(path: &Path) -> Option<&'static str> {
     if ours { None } else { Some(name) }
 }
 
+/// Load a library. On Windows, a library given by full path finds its own helper
+/// libraries in its own folder first (so bundled copies such as vulkan-1.dll are used even
+/// when the PC has none), then in the usual places.
+pub fn open_library(path: &Path) -> Result<Library, libloading::Error> {
+    #[cfg(windows)]
+    {
+        if path.is_absolute() {
+            const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+            return unsafe { libloading::os::windows::Library::load_with_flags(path, LOAD_WITH_ALTERED_SEARCH_PATH) }.map(Library::from);
+        }
+    }
+    unsafe { Library::new(path) }
+}
+
+/// The DLLs a Windows library imports (from its PE import table).
+pub fn pe_imports(path: &Path) -> Vec<String> {
+    let Ok(b) = std::fs::read(path) else { return Vec::new() };
+    let rd16 = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize).unwrap_or(0);
+    let rd32 = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize).unwrap_or(0);
+    let pe = rd32(0x3c);
+    if b.get(pe..pe + 4) != Some(b"PE\0\0".as_slice()) {
+        return Vec::new();
+    }
+    let nsec = rd16(pe + 6);
+    let opt = pe + 24;
+    let dd = if rd16(opt) == 0x20b { opt + 112 } else { opt + 96 };
+    let sec = opt + rd16(pe + 20);
+    let to_off = |rva: usize| -> Option<usize> {
+        (0..nsec).find_map(|i| {
+            let s = sec + 40 * i;
+            let (va, vsz, raw, rsz) = (rd32(s + 12), rd32(s + 8), rd32(s + 20), rd32(s + 16));
+            (rva >= va && rva < va + vsz.max(rsz)).then(|| rva - va + raw)
+        })
+    };
+    let mut names = Vec::new();
+    let Some(mut o) = to_off(rd32(dd + 8)) else { return names };
+    for _ in 0..512 {
+        let name_rva = rd32(o + 12);
+        if name_rva == 0 {
+            break;
+        }
+        if let Some(n) = to_off(name_rva) {
+            if let Some(end) = b.get(n..).and_then(|s| s.iter().position(|&c| c == 0)) {
+                names.push(String::from_utf8_lossy(&b[n..n + end]).to_string());
+            }
+        }
+        o += 20;
+    }
+    names
+}
+
+/// Libraries `dll` imports that are neither next to it nor in Windows' system folder.
+fn missing_imports(dll: &Path) -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let here = dll.parent().map(Path::to_path_buf).unwrap_or_default();
+    let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    // A 32-bit program on 64-bit Windows sees SysWOW64 as its system folder.
+    let system = if cfg!(target_arch = "x86") && windir.join("SysWOW64").is_dir() { windir.join("SysWOW64") } else { windir.join("System32") };
+    pe_imports(dll)
+        .into_iter()
+        .filter(|n| {
+            let l = n.to_ascii_lowercase();
+            !l.starts_with("api-ms-") && !l.starts_with("ext-ms-") && !here.join(n).exists() && !system.join(n).exists()
+        })
+        .collect()
+}
+
 pub struct Engine {
     api: Arc<Api>,
     pub path: String,
@@ -278,6 +347,14 @@ impl Engine {
                         })
                     }
                     Err(e) => {
+                        // "Module not found" means a library the engine needs is missing:
+                        // name it, so the problem is clear.
+                        let missing = missing_imports(&p);
+                        let e = if missing.is_empty() {
+                            e
+                        } else {
+                            format!("{e}. It needs {}, which this PC doesn't have", missing.join(", "))
+                        };
                         tried.push(format!("{}: {e}", p.display()));
                         crate::log::warn(format!("Engine could not load: {}", tried.last().unwrap()));
                     }

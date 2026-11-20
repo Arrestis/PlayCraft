@@ -295,34 +295,7 @@ impl App {
             panic!("test: the modern renderer failed");
         }
         let settings = Settings::load();
-        // Let the Blu-ray library find helper libraries placed next to the engine.
-        // The bundled engine folder next to the program comes first.
-        // A libaacs the person downloaded from Settings (user folder) wins over the bundled one.
-        let mut extra: Vec<PathBuf> = crate::embed::dir().into_iter().collect();
-        extra.push(library::engine_dir());
-        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("engine"))) {
-            extra.push(d);
-        }
-        extra.retain(|d| d.is_dir());
-        // Point libbluray at the decryption libraries.
-        let ext = if cfg!(windows) { "dll" } else if cfg!(target_os = "macos") { "dylib" } else { "so" };
-        for (var, name) in [("LIBAACS_PATH", "libaacs"), ("LIBBDPLUS_PATH", "libbdplus")] {
-            if std::env::var_os(var).is_none() {
-                if let Some(d) = extra.iter().find(|d| d.join(format!("{name}.{ext}")).exists()) {
-                    std::env::set_var(var, d.join(name));
-                }
-            }
-        }
-        if !extra.is_empty() {
-            let path = std::env::var_os("PATH").unwrap_or_default();
-            let mut paths: Vec<PathBuf> = std::env::split_paths(&path).collect();
-            for (i, d) in extra.into_iter().enumerate() {
-                paths.insert(i, d);
-            }
-            if let Ok(joined) = std::env::join_paths(paths) {
-                std::env::set_var("PATH", joined);
-            }
-        }
+        setup_library_paths();
         let engine = Engine::locate();
         match &engine {
             Ok(e) => crate::log::info(format!("Playback engine found: {} (client API {})", e.path, e.api_version())),
@@ -1372,4 +1345,37 @@ fn spawn_drive_watcher(ctx: egui::Context) -> Receiver<(Vec<Drive>, Vec<discs::V
         std::thread::sleep(Duration::from_secs(3));
     });
     rx
+}
+
+/// Make the engine's helper libraries findable: put the engine folders first on PATH and
+/// point libbluray at the bundled decryption libraries. Called once at start-up.
+pub fn setup_library_paths() {
+        // Let the Blu-ray library find helper libraries placed next to the engine.
+        // The bundled engine folder next to the program comes first.
+        // A libaacs the person downloaded from Settings (user folder) wins over the bundled one.
+        let mut extra: Vec<PathBuf> = crate::embed::dir().into_iter().collect();
+        extra.push(library::engine_dir());
+        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("engine"))) {
+            extra.push(d);
+        }
+        extra.retain(|d| d.is_dir());
+        // Point libbluray at the decryption libraries.
+        let ext = if cfg!(windows) { "dll" } else if cfg!(target_os = "macos") { "dylib" } else { "so" };
+        for (var, name) in [("LIBAACS_PATH", "libaacs"), ("LIBBDPLUS_PATH", "libbdplus")] {
+            if std::env::var_os(var).is_none() {
+                if let Some(d) = extra.iter().find(|d| d.join(format!("{name}.{ext}")).exists()) {
+                    std::env::set_var(var, d.join(name));
+                }
+            }
+        }
+        if !extra.is_empty() {
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            let mut paths: Vec<PathBuf> = std::env::split_paths(&path).collect();
+            for (i, d) in extra.into_iter().enumerate() {
+                paths.insert(i, d);
+            }
+            if let Ok(joined) = std::env::join_paths(paths) {
+                std::env::set_var("PATH", joined);
+            }
+        }
 }

@@ -50,7 +50,7 @@ pub fn info() -> Option<AacsInfo> {
                 continue;
             }
             // Loading only reads the library's version; nothing is decrypted here.
-            let Ok(lib) = (unsafe { libloading::Library::new(&p) }) else { continue };
+            let Ok(lib) = crate::mpv::open_library(&p) else { continue };
             let version = unsafe {
                 lib.get::<unsafe extern "C" fn(*mut c_int, *mut c_int, *mut c_int)>(b"aacs_get_version\0")
                     .ok()

@@ -3,6 +3,22 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] - 2026-11-21
+
+### Fixed
+- **"The codec engine is not installed yet … The specified module could not be found
+  (os error 126)" on other PCs.** The playback engine needs the Vulkan loader
+  (`vulkan-1.dll`). Most graphics drivers install it, so the engine worked on the
+  development PC but not on PCs without it. PlayCraft now ships the open-source Khronos
+  Vulkan loader with the engine and loads the engine's helper libraries from the engine's
+  own folder first, so it no longer depends on what the PC has installed.
+- *Install codec engine* now also installs the Vulkan loader.
+- If the engine still can't load, the message names the exact file that is missing.
+
+### Added
+- `playcraft --check-engine` loads the playback engine and the disc libraries and reports
+  each one. GitHub's release build now runs it on a fresh Windows machine for every
+  Windows download, so a build that wouldn't work on a clean PC is caught before release.
 ## [0.3.1] - 2026-11-21
 
 ### Fixed

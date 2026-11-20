@@ -94,7 +94,7 @@ fn load_any(names: &[&str]) -> Result<Library, String> {
         for n in names {
             let p = dir.join(n);
             if p.exists() {
-                match unsafe { Library::new(&p) } {
+                match crate::mpv::open_library(&p) {
                     Ok(l) => return Ok(l),
                     Err(e) => last = format!("{}: {e}", p.display()),
                 }
@@ -303,7 +303,6 @@ fn bd_lib() -> Result<&'static BdLib, String> {
 }
 
 /// Whether menus can be used for this kind of disc on this computer.
-#[allow(dead_code)]
 pub fn available(kind: NavKind) -> Result<(), String> {
     match kind {
         NavKind::Dvd => dvd_lib().map(|_| ()),

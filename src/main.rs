@@ -33,6 +33,50 @@ fn main() -> eframe::Result<()> {
         match a.to_str() {
             Some("--screenshot") => screenshot = args.next().map(PathBuf::from),
             Some("--test-picture") => demo = true,
+            // playcraft --check-engine: unpack and load the playback engine and the disc
+            // libraries, report each one, and exit 0 if playback would work (used to test
+            // builds on clean PCs).
+            Some("--check-engine") => {
+                library::migrate_old_data();
+                log::init();
+                embed::prepare();
+                app::setup_library_paths();
+                let mut ok = true;
+                // Keep the engine loaded until the end, so its helper libraries can be inspected.
+                let engine = mpv::Engine::locate();
+                match &engine {
+                    Ok(e) => println!("OK      playback engine: {} (client API {})", e.path, e.api_version()),
+                    Err(e) => {
+                        ok = false;
+                        println!("FAILED  playback engine: {e}");
+                    }
+                }
+                for (name, kind) in [("Blu-ray menus (libbluray)", nav::NavKind::Bluray), ("DVD menus (libdvdnav)", nav::NavKind::Dvd)] {
+                    match nav::available(kind) {
+                        Ok(()) => println!("OK      {name}"),
+                        Err(e) => println!("MISSING {name}: {e}"),
+                    }
+                }
+                match aacs::info() {
+                    Some(i) => println!("OK      libaacs {} ({})", i.version, i.path),
+                    None => println!("MISSING libaacs"),
+                }
+                #[cfg(windows)]
+                unsafe {
+                    use windows_sys::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+                    let name: Vec<u16> = "vulkan-1.dll".encode_utf16().chain(Some(0)).collect();
+                    let h = GetModuleHandleW(name.as_ptr());
+                    if h.is_null() {
+                        println!("INFO    vulkan-1.dll not loaded");
+                    } else {
+                        let mut buf = [0u16; 1024];
+                        let n = GetModuleFileNameW(h, buf.as_mut_ptr(), buf.len() as u32) as usize;
+                        println!("INFO    vulkan-1.dll loaded from {}", String::from_utf16_lossy(&buf[..n]));
+                    }
+                }
+                log::info(format!("Engine check: {}", if ok { "passed" } else { "FAILED" }));
+                std::process::exit(if ok { 0 } else { 1 });
+            }
             // playcraft --install-engine-to <folder>: download the playback engine there and
             // exit (a command-line way to install it on a PC where the button doesn't work).
             Some("--install-engine-to") => {
