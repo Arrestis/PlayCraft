@@ -34,6 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In Blu-ray menus, moving the pointer no longer leaves every button it passed over
   highlighted.
 - Choosing a disc-menu button (for example Scene Selection) no longer freezes the app.
+- Disc-menu buttons no longer stay on the picture once the film starts playing.
 - Switching the popped-out remote between full and mini no longer shrinks it.
 
 ## [0.1.0] - 2026-11-19

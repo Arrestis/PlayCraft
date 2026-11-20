@@ -568,7 +568,13 @@ impl Dvd {
                 Ok(Step::Again)
             }
             6 => {
+                let was_vts = self.in_vts;
                 self.in_vts = unsafe { (self.lib.is_vts)(self.nav) } == 1;
+                if self.in_vts && !was_vts {
+                    // Left the menu for the film: drop the menu picture.
+                    self.spu = None;
+                    self.spu_buf.clear();
+                }
                 self.update_highlight(shared);
                 Ok(Step::Again)
             }
@@ -872,11 +878,17 @@ unsafe extern "C" fn bd_overlay_cb(handle: P, ov: *const BdOverlay) {
             let (w, h) = (ov.w as usize, ov.h as usize);
             planes[pi] = Some(Plane { x: ov.x as usize, y: ov.y as usize, w, h, rgba: vec![0; w * h * 4] });
         }
-        1 => planes[pi] = None,
+        // Closing, clearing or hiding a layer takes effect at once (discs don't always
+        // send a "flush" afterwards), so old menu buttons never stay on the picture.
+        1 => {
+            planes[pi] = None;
+            publish(&planes, &ctx.shared);
+        }
         2 | 5 => {
             if let Some(p) = planes[pi].as_mut() {
                 p.rgba.fill(0);
             }
+            publish(&planes, &ctx.shared);
         }
         3 => {
             if let (Some(p), false, false) = (planes[pi].as_mut(), ov.img.is_null(), ov.palette.is_null()) {
@@ -1037,6 +1049,9 @@ impl Bd {
                     self.duration = unsafe { (*info).duration } as f64 / 90_000.0;
                     unsafe { (self.lib.free_title_info)(info) };
                 }
+                if !shared.in_menu.load(Ordering::Acquire) {
+                    self.clear_menu_layer();
+                }
             }
             25 => {
                 self.still = ev.param != 0;
@@ -1049,7 +1064,15 @@ impl Bd {
                 self.still_deadline = if ev.param == 0 { None } else { Some(Instant::now() + Duration::from_secs(ev.param as u64)) };
             }
             29 => shared.popup.store(ev.param != 0, Ordering::Release),
-            30 => shared.in_menu.store(ev.param != 0, Ordering::Release),
+            30 => {
+                let was = shared.in_menu.swap(ev.param != 0, Ordering::AcqRel);
+                if was && ev.param == 0 {
+                    // Menu closed: wipe the menu layer (subtitles on the other layer stay).
+                    self.clear_menu_layer();
+                }
+            }
+            // A new title or playlist starts: no menu buttons belong on it.
+            5 if !shared.in_menu.load(Ordering::Acquire) => self.clear_menu_layer(),
             _ => {}
         }
         if n > 0 {
@@ -1147,6 +1170,16 @@ impl Bd {
             self.still_deadline = None;
             shared.restart.store(true, Ordering::Release);
         }
+    }
+
+    /// Empty the menu (interactive graphics) layer and show the result.
+    fn clear_menu_layer(&mut self) {
+        let ctx = unsafe { &*self.ctx };
+        let mut planes = ctx.planes.lock().unwrap();
+        if let Some(p) = planes[1].as_mut() {
+            p.rgba.fill(0);
+        }
+        publish(&planes, &ctx.shared);
     }
 
     fn progress(&self) -> (f64, f64) {
