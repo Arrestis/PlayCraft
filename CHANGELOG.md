@@ -46,6 +46,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Choosing a disc-menu button (for example Scene Selection) no longer freezes the app.
 - Disc-menu buttons no longer stay on the picture once the film starts playing.
 - Switching the popped-out remote between full and mini no longer shrinks it.
+- "Codec engine not installed … LoadLibraryExW failed": PlayCraft now skips engine files built
+  for a different processor and says so plainly. Install codec engine now downloads the engine
+  for PlayCraft's own processor (x64, x86 or ARM64), so it actually fixes the problem.
+- Windows builds no longer need the Microsoft Visual C++ runtime.
 
 ## [0.1.0] - 2026-11-19
 

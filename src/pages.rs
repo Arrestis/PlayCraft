@@ -1059,6 +1059,7 @@ fn engine_tab(app: &mut App, ui: &mut Ui, action: &mut Option<Action>) {
         }
         Err(e) => {
             ui.label(RichText::new("The codec engine is not installed yet").color(WARN).size(16.0));
+            ui.label(RichText::new(format!("This PlayCraft is for {} processors; the engine must match.", Engine::processor_name())).color(TEXT_DIM));
             ui.label(RichText::new(format!("Details: {e}")).color(TEXT_DIM).size(12.0));
         }
     }

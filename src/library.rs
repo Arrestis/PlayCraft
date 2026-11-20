@@ -331,7 +331,8 @@ pub fn install_engine(ctx: eframe::egui::Context) -> Receiver<InstallMsg> {
         let script = format!(
             r#"$ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {{ 'aarch64' }} else {{ 'x86_64' }}
+# The engine must match PlayCraft's own processor, not just the computer's.
+$arch = '{mpv_arch}'
 $ProgressPreference = 'SilentlyContinue'
 $url = $null; $name = $null
 try {{
@@ -360,7 +361,8 @@ if (-not (Test-Path '{dest}\libmpv-2.dll')) {{ throw 'The engine could not be un
 Write-Output 'OK'
 "#,
             archive = archive.display().to_string().replace('\'', "''"),
-            dest = dest.display().to_string().replace('\'', "''")
+            dest = dest.display().to_string().replace('\'', "''"),
+            mpv_arch = msys_arch().0
         );
         let mut cmd = std::process::Command::new("powershell.exe");
         cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script]);
@@ -434,25 +436,27 @@ pub fn install_aacs(ctx: eframe::egui::Context) -> Receiver<InstallMsg> {
             r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$mirror = 'https://repo.msys2.org/mingw/mingw64/'
+$mirror = 'https://repo.msys2.org/mingw/{env}/'
 $index = (Invoke-WebRequest -UseBasicParsing $mirror).Content
 New-Item -ItemType Directory -Force '{work}' | Out-Null
-foreach ($p in 'libaacs','libbdplus','libgcrypt','libgpg-error','libwinpthread','gettext-runtime','libiconv') {{
-  $m = [regex]::Matches($index, 'href="(mingw-w64-x86_64-' + [regex]::Escape($p) + '-[0-9][^"]*?\.pkg\.tar\.zst)"')
+foreach ($p in 'libaacs','libbdplus','libgcrypt','libgpg-error','libwinpthread','gettext-runtime','libiconv','gcc-libs','libc%2B%2B','libunwind') {{
+  $m = [regex]::Matches($index, 'href="(mingw-w64-{cpu}-' + [regex]::Escape($p) + '-[0-9][^"]*?\.pkg\.tar\.zst)"')
   if ($m.Count -eq 0) {{ if ($p -in 'libaacs','libgcrypt','libgpg-error') {{ throw "$p was not found" }} else {{ continue }} }}
   $name = $m[$m.Count - 1].Groups[1].Value
   Write-Output ("GOT " + $name)
   Invoke-WebRequest -UseBasicParsing ($mirror + $name) -OutFile ('{work}\' + $name)
   & tar.exe -xf ('{work}\' + $name) -C '{work}'
 }}
-Copy-Item '{work}\mingw64\bin\*.dll' '{dest}' -Force
+Copy-Item '{work}\{env}\bin\*.dll' '{dest}' -Force
 Copy-Item '{dest}\libaacs-0.dll' '{dest}\libaacs.dll' -Force
 if (Test-Path '{dest}\libbdplus-0.dll') {{ Copy-Item '{dest}\libbdplus-0.dll' '{dest}\libbdplus.dll' -Force }}
 Remove-Item -Recurse -Force '{work}'
 Write-Output 'OK'
 "#,
             work = q(&work),
-            dest = q(&dest)
+            dest = q(&dest),
+            env = msys_arch().1,
+            cpu = msys_arch().2
         );
         let mut cmd = std::process::Command::new("powershell.exe");
         cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script]);
@@ -465,7 +469,7 @@ Write-Output 'OK'
             Ok(o) if o.status.success() => {
                 let got: Vec<String> = String::from_utf8_lossy(&o.stdout)
                     .lines()
-                    .filter_map(|l| l.strip_prefix("GOT mingw-w64-x86_64-").map(|s| s.trim_end_matches("-any.pkg.tar.zst").to_string()))
+                    .filter_map(|l| l.strip_prefix(&format!("GOT mingw-w64-{}-", msys_arch().2)[..]).map(|s| s.trim_end_matches("-any.pkg.tar.zst").to_string()))
                     .collect();
                 Ok(format!("Installed {}. Restart the player to use it.", got.join(", ")))
             }
@@ -500,5 +504,16 @@ pub fn fmt_size(b: u64) -> String {
         format!("{:.0} KB", f / 1e3)
     } else {
         String::new()
+    }
+}
+
+/// (engine build, MSYS2 environment, MSYS2 package processor) matching this PlayCraft.
+pub fn msys_arch() -> (&'static str, &'static str, &'static str) {
+    if cfg!(target_arch = "aarch64") {
+        ("aarch64", "clangarm64", "clang-aarch64")
+    } else if cfg!(target_arch = "x86") {
+        ("i686", "mingw32", "i686")
+    } else {
+        ("x86_64", "mingw64", "x86_64")
     }
 }

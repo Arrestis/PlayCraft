@@ -140,7 +140,13 @@ macro_rules! sym {
 impl Api {
     fn load(path: &Path) -> Result<Api, String> {
         unsafe {
-            let lib = Library::new(path).map_err(|e| e.to_string())?;
+            let lib = Library::new(path).map_err(|e| {
+                // Include Windows' own reason (e.g. a missing helper DLL or wrong processor).
+                match std::error::Error::source(&e) {
+                    Some(src) => format!("{e} ({src})"),
+                    None => e.to_string(),
+                }
+            })?;
             Ok(Api {
                 create: sym!(lib, "mpv_create"),
                 initialize: sym!(lib, "mpv_initialize"),
@@ -198,6 +204,47 @@ pub fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// The processor this PlayCraft was built for, in plain words.
+fn this_processor() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "ARM64"
+    } else if cfg!(target_arch = "x86") {
+        "32-bit x86"
+    } else {
+        "64-bit Intel/AMD (x64)"
+    }
+}
+
+/// On Windows, read which processor a DLL was built for and return its name if it differs
+/// from this PlayCraft's (such a file can never load, so it is skipped with a clear note).
+fn wrong_processor(path: &Path) -> Option<&'static str> {
+    if !cfg!(windows) {
+        return None;
+    }
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut head = [0u8; 64];
+    f.read_exact(&mut head).ok()?;
+    if &head[..2] != b"MZ" {
+        return None;
+    }
+    let pe = u32::from_le_bytes([head[60], head[61], head[62], head[63]]) as u64;
+    f.seek(SeekFrom::Start(pe)).ok()?;
+    let mut sig = [0u8; 6];
+    f.read_exact(&mut sig).ok()?;
+    if &sig[..4] != b"PE\0\0" {
+        return None;
+    }
+    let machine = u16::from_le_bytes([sig[4], sig[5]]);
+    let (name, ours) = match machine {
+        0x8664 => ("64-bit Intel/AMD (x64)", cfg!(target_arch = "x86_64")),
+        0x014c => ("32-bit x86", cfg!(target_arch = "x86")),
+        0xAA64 => ("ARM64", cfg!(target_arch = "aarch64")),
+        _ => return None,
+    };
+    if ours { None } else { Some(name) }
+}
+
 pub struct Engine {
     api: Arc<Api>,
     pub path: String,
@@ -206,23 +253,34 @@ pub struct Engine {
 impl Engine {
     /// Find and load the engine. Returns a human-readable reason on failure.
     pub fn locate() -> Result<Engine, String> {
-        let mut last_err = String::from("not found");
+        // Every place tried and why it failed, so the message explains the real problem.
+        let mut tried: Vec<String> = Vec::new();
         for dir in search_dirs() {
             for name in library_names() {
                 let p = dir.join(name);
-                if p.exists() {
-                    match Api::load(&p) {
-                        Ok(api) => {
-                            return Ok(Engine {
-                                api: Arc::new(api),
-                                path: p.display().to_string(),
-                            })
-                        }
-                        Err(e) => last_err = format!("{}: {e}", p.display()),
+                if !p.exists() {
+                    continue;
+                }
+                if let Some(other) = wrong_processor(&p) {
+                    tried.push(format!("{} is for {other}, but this PlayCraft is for {}", p.display(), this_processor()));
+                    crate::log::warn(tried.last().unwrap());
+                    continue;
+                }
+                match Api::load(&p) {
+                    Ok(api) => {
+                        return Ok(Engine {
+                            api: Arc::new(api),
+                            path: p.display().to_string(),
+                        })
+                    }
+                    Err(e) => {
+                        tried.push(format!("{}: {e}", p.display()));
+                        crate::log::warn(format!("Engine could not load: {}", tried.last().unwrap()));
                     }
                 }
             }
         }
+        let mut last_err = if tried.is_empty() { String::from("not found") } else { tried.join("; ") };
         // Finally let the system loader search its usual places.
         for name in library_names() {
             match Api::load(Path::new(name)) {
@@ -240,6 +298,11 @@ impl Engine {
             }
         }
         Err(last_err)
+    }
+
+    /// Where an installed engine should go for this PlayCraft (used by the installer).
+    pub fn processor_name() -> &'static str {
+        this_processor()
     }
 
     pub fn api_version(&self) -> String {
