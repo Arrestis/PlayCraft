@@ -78,9 +78,11 @@ fn main() {
         _ => "x86_64",
     };
 
+    println!("cargo:warning=Bundling the {arch} playback engine into {}", engine.display());
     if !engine.join("libmpv-2.dll").exists() {
-        if let Err(e) = fetch_mpv(&engine, &work, arch) {
-            println!("cargo:warning=Could not bundle the playback engine ({e}); the program will offer to install it.");
+        match fetch_mpv(&engine, &work, arch) {
+            Ok(()) => println!("cargo:warning=Playback engine bundled"),
+            Err(e) => println!("cargo:warning=Could not bundle the playback engine ({e}); the program will offer to install it."),
         }
     }
     // Disc navigation (menus) and decryption libraries, with every dependency they need.
@@ -101,6 +103,7 @@ fn main() {
         }
         match fetch_msys(&roots, &engine, &work, env, cpu) {
             Ok(()) => {
+                println!("cargo:warning=Disc libraries bundled");
                 let _ = std::fs::write(&marker, "ok");
             }
             Err(e) => println!("cargo:warning=Could not bundle the disc libraries ({e})."),

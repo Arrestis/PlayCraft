@@ -28,7 +28,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # build.rs bundles libmpv (FFmpeg) and the DVD/Blu-ray libraries for this processor
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -vv
+        env:
+          CARGO_TERM_VERBOSE: "true"
+      - name: Show bundled engine
+        shell: pwsh
+        run: |
+          Get-ChildItem target/${{ matrix.target }}/release/engine -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table | Out-String -Width 200
+          Get-ChildItem target/${{ matrix.target }}/release/build -Directory -Filter "playcraft-*" | ForEach-Object { Get-Content (Join-Path $_.FullName "output") -ErrorAction SilentlyContinue; Get-Content (Join-Path $_.FullName "stderr") -ErrorAction SilentlyContinue }
       - name: Installer (.msi) and portable zip
         shell: pwsh
         run: |
