@@ -289,6 +289,11 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, screenshot: Option<PathBuf>, files: Vec<PathBuf>, demo: bool) -> App {
         crate::ui::setup_style(&cc.egui_ctx);
+        // Test hook: PLAYCRAFT_TEST_WGPU_FAIL=1 makes the modern renderer "fail" so the
+        // automatic switch to OpenGL can be checked.
+        if cc.wgpu_render_state.is_some() && std::env::var_os("PLAYCRAFT_TEST_WGPU_FAIL").is_some() {
+            panic!("test: the modern renderer failed");
+        }
         let settings = Settings::load();
         // Let the Blu-ray library find helper libraries placed next to the engine.
         // The bundled engine folder next to the program comes first.
@@ -1322,7 +1327,7 @@ impl eframe::App for App {
         crate::ui::draw(self, ui);
     }
 
-    fn on_exit(&mut self) {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.remember_position();
         self.settings.save();
     }

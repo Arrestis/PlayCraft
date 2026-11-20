@@ -325,89 +325,108 @@ pub fn install_engine(ctx: eframe::egui::Context) -> Receiver<InstallMsg> {
             ctx.request_repaint();
             return;
         }
-        let _ = tx.send(InstallMsg::Progress("Finding the newest engine build…".into()));
-        ctx.request_repaint();
-        let archive = std::env::temp_dir().join("playcraft-engine.7z");
-        let script = format!(
-            r#"$ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-# The engine must match PlayCraft's own processor, not just the computer's.
-$arch = '{mpv_arch}'
-$ProgressPreference = 'SilentlyContinue'
-$url = $null; $name = $null
-try {{
-  $rel = Invoke-RestMethod -UseBasicParsing 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers @{{ 'User-Agent' = 'playcraft' }}
-  $asset = $rel.assets | Where-Object {{ $_.name -like "mpv-dev-$arch-2*" }} | Select-Object -First 1
-  if ($asset) {{ $url = $asset.browser_download_url; $name = $asset.name }}
-}} catch {{ }}
-if (-not $url) {{
-  $r = Invoke-WebRequest -UseBasicParsing 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/latest'
-  $tag = ($r.BaseResponse.ResponseUri.AbsoluteUri -split '/')[-1]
-  $h = Invoke-WebRequest -UseBasicParsing ('https://github.com/shinchiro/mpv-winbuild-cmake/releases/expanded_assets/' + $tag)
-  $m = [regex]::Match($h.Content, 'href="([^"]*/mpv-dev-' + $arch + '-2[^"]*\.7z)"')
-  if ($m.Success) {{ $url = 'https://github.com' + $m.Groups[1].Value; $name = ($url -split '/')[-1] }}
-}}
-if (-not $url) {{ throw 'No engine build was found for this computer. Check the internet connection and try again.' }}
-Write-Output ("DOWNLOADING " + $name)
-Invoke-WebRequest -UseBasicParsing $url -OutFile '{archive}'
-Write-Output 'EXTRACTING'
-& tar.exe -xf '{archive}' -C '{dest}' libmpv-2.dll
-if (-not (Test-Path '{dest}\libmpv-2.dll')) {{
-  $7z = Get-Command 7z.exe -ErrorAction SilentlyContinue
-  if ($7z) {{ & $7z.Source e '{archive}' ('-o' + '{dest}') libmpv-2.dll -y | Out-Null }}
-}}
-Remove-Item '{archive}' -ErrorAction SilentlyContinue
-if (-not (Test-Path '{dest}\libmpv-2.dll')) {{ throw 'The engine could not be unpacked.' }}
-Write-Output 'OK'
-"#,
-            archive = archive.display().to_string().replace('\'', "''"),
-            dest = dest.display().to_string().replace('\'', "''"),
-            mpv_arch = msys_arch().0
-        );
-        let mut cmd = std::process::Command::new("powershell.exe");
-        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script]);
-        cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // no console window
-        }
-        let child = cmd.spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx.send(InstallMsg::Done(Err(e.to_string())));
-                ctx.request_repaint();
-                return;
-            }
+        let say = |m: String| {
+            let _ = tx.send(InstallMsg::Progress(m));
+            ctx.request_repaint();
         };
-        if let Some(out) = child.stdout.take() {
-            use std::io::BufRead;
-            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
-                let msg = if let Some(n) = line.strip_prefix("DOWNLOADING ") {
-                    format!("Downloading {n} (about 30 MB)…")
-                } else if line == "EXTRACTING" {
-                    "Unpacking…".to_string()
-                } else {
-                    continue;
-                };
-                let _ = tx.send(InstallMsg::Progress(msg));
-                ctx.request_repaint();
-            }
+        let res = fetch_engine_windows(&dest, &say);
+        if let Err(e) = &res {
+            crate::log::error(format!("Codec engine install failed: {e}"));
         }
-        let output = child.wait_with_output();
-        let res = match output {
-            Ok(o) if o.status.success() => Ok(dest.join("libmpv-2.dll").display().to_string()),
-            Ok(o) => {
-                let err = String::from_utf8_lossy(&o.stderr).lines().find(|l| !l.trim().is_empty()).unwrap_or("download failed").to_string();
-                Err(err)
-            }
-            Err(e) => Err(e.to_string()),
-        };
         let _ = tx.send(InstallMsg::Done(res));
         ctx.request_repaint();
     });
     rx
+}
+
+/// Run a Windows tool without a console window; return its output or a readable error.
+fn run_tool(exe: &str, args: &[&str]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let o = cmd.output().map_err(|e| format!("{exe} could not start ({e})"))?;
+    if o.status.success() {
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    } else {
+        let err = String::from_utf8_lossy(&o.stderr);
+        Err(format!("{exe}: {}", err.lines().find(|l| !l.trim().is_empty()).unwrap_or("failed")))
+    }
+}
+
+/// Download the playback engine for this PlayCraft's processor using Windows' own curl.exe
+/// and tar.exe (no PowerShell scripts, which security software often blocks).
+pub fn fetch_engine_windows(dest: &Path, say: &dyn Fn(String)) -> Result<String, String> {
+    const REPO: &str = "https://github.com/shinchiro/mpv-winbuild-cmake";
+    let arch = msys_arch().0;
+    let curl = |args: &[&str]| -> Result<String, String> {
+        let mut a = vec!["-sSfL", "--retry", "4", "--retry-delay", "2", "-A", "playcraft"];
+        a.extend_from_slice(args);
+        run_tool("curl.exe", &a)
+    };
+    say("Finding the newest engine build…".into());
+    // The "latest" page redirects to …/releases/tag/<tag>.
+    let headers = curl(&["-I", &format!("{REPO}/releases/latest")])
+        .map_err(|e| format!("Couldn't reach GitHub ({e}). Check the internet connection, or a firewall or proxy blocking it."))?;
+    let tag = headers
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let lower = l.to_ascii_lowercase();
+            lower.starts_with("location:").then(|| l[9..].trim().to_string())
+        })
+        .filter_map(|l| l.split("/tag/").nth(1).map(str::to_string))
+        .last()
+        .ok_or("GitHub didn't say which engine build is the newest")?;
+    let page = curl(&[&format!("{REPO}/releases/expanded_assets/{tag}")])?;
+    let want = format!("mpv-dev-{arch}-2");
+    let href = page
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|s| s.split('"').next())
+        .find(|h| {
+            let name = h.rsplit('/').next().unwrap_or(h);
+            name.starts_with(&want) && name.ends_with(".7z")
+        })
+        .ok_or_else(|| format!("No engine build for {} was found in release {tag}", crate::mpv::Engine::processor_name()))?
+        .to_string();
+    let url = if href.starts_with("http") { href.clone() } else { format!("https://github.com{href}") };
+    let name = href.rsplit('/').next().unwrap_or("engine.7z").to_string();
+    say(format!("Downloading {name} (about 30 MB)…"));
+    let archive = std::env::temp_dir().join(format!("playcraft-{name}"));
+    let archive_s = archive.display().to_string();
+    curl(&["-o", &archive_s, &url]).map_err(|e| format!("The download failed ({e})"))?;
+
+    say("Unpacking…".into());
+    let _ = std::fs::create_dir_all(dest);
+    let dest_s = dest.display().to_string();
+    let target = dest.join("libmpv-2.dll");
+    let _ = std::fs::remove_file(&target);
+    let tar = run_tool("tar.exe", &["-xf", &archive_s, "-C", &dest_s, "libmpv-2.dll"]);
+    if !target.exists() {
+        // Older Windows tar can't open .7z files: try 7-Zip if it is installed.
+        let seven = ["7z.exe", r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"];
+        let mut done = false;
+        for s in seven {
+            if run_tool(s, &["e", &archive_s, &format!("-o{dest_s}"), "libmpv-2.dll", "-y"]).is_ok() && target.exists() {
+                done = true;
+                break;
+            }
+        }
+        if !done {
+            let _ = std::fs::remove_file(&archive);
+            return Err(format!(
+                "The engine was downloaded but couldn't be unpacked ({}). Installing 7-Zip (7-zip.org) and trying again will fix this.",
+                tar.err().unwrap_or_else(|| "tar.exe found no engine file".into())
+            ));
+        }
+    }
+    let _ = std::fs::remove_file(&archive);
+    crate::log::info(format!("Codec engine installed to {}", target.display()));
+    Ok(target.display().to_string())
 }
 
 /// Download libaacs and libbdplus (built by MSYS2 from VideoLAN's official source releases)

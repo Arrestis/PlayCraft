@@ -1,6 +1,6 @@
 [package]
 name = "playcraft"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "PlayCraft - a free, open-source DVD, CD, Blu-ray and media player for Windows, macOS and Linux"
 license = "GPL-3.0-or-later"
@@ -11,7 +11,8 @@ name = "playcraft"
 path = "src/main.rs"
 
 [dependencies]
-eframe = "0.37"
+# wgpu (Direct3D 12 / Vulkan / Metal) by default, with OpenGL (glow) as the fallback.
+eframe = { version = "0.37", features = ["glow"] }
 libloading = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rfd = "0.15"
@@ -28,6 +29,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Media_Multimedia",
     "Win32_System_Diagnostics_Debug",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -855,6 +855,7 @@ dependencies = [
  "egui-winit",
  "egui_glow",
  "egui_system_font_provider",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -2574,7 +2575,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "playcraft"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "dirs",
  "eframe",

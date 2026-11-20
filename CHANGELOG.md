@@ -3,6 +3,20 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] - 2026-11-21
+
+### Fixed
+- **PlayCraft wouldn't start on some PCs.** If the modern graphics system (Direct3D 12 /
+  Vulkan) isn't available, which is common on older graphics, virtual machines and remote
+  desktops, PlayCraft now restarts itself with OpenGL and remembers that for next time.
+- Start-up problems and crashes now show a message with the reason, and are written to the
+  activity log, instead of PlayCraft closing silently.
+- **Install codec engine works where it used to fail.** It now downloads with Windows' own
+  curl.exe and unpacks with tar.exe (or 7-Zip), instead of PowerShell scripts that security
+  software and proxy settings often block. If it still fails, the message says exactly why.
+
+### Added
+- `playcraft --install-engine-to <folder>` installs the playback engine from the command line.
 ## [0.3.0] - 2026-11-20
 
 ### Changed

@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     app.frame_no += 1;
+    if app.frame_no == 2 {
+        crate::note_first_frame();
+    }
     app.pump(&ctx);
     handle_keys(app, &ctx);
     if app.current.is_some() && !app.paused {
