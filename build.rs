@@ -65,8 +65,16 @@ fn main() {
         return;
     }
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
-    let Some(exe_dir) = out.ancestors().nth(3).map(Path::to_path_buf) else { return };
+    // OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out (newer Cargo adds another level:
+    // <target>/<profile>/build/<pkg>/<hash>/out). The program sits next to that "build" folder.
+    let Some(exe_dir) = out
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+    else {
+        return;
+    };
     let engine = exe_dir.join("engine");
     let _ = std::fs::create_dir_all(&engine);
     let work = out.join("downloads");

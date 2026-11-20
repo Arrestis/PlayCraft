@@ -28,9 +28,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # build.rs bundles libmpv (FFmpeg) and the DVD/Blu-ray libraries for this processor
-      - run: cargo build --release --target ${{ matrix.target }} -vv
-        env:
-          CARGO_TERM_VERBOSE: "true"
+      - run: cargo build --release --target ${{ matrix.target }}
       - name: Show bundled engine
         shell: pwsh
         run: |
