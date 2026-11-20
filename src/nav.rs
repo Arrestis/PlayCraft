@@ -73,8 +73,9 @@ impl NavShared {
 
 fn engine_dirs() -> Vec<PathBuf> {
     let mut d = Vec::new();
-    if let Some(e) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("engine"))) {
-        d.push(e);
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+        d.push(dir.join("engine"));
+        d.push(dir.join("..").join("lib"));
     }
     d.push(crate::library::engine_dir());
     if cfg!(target_os = "macos") {
@@ -159,7 +160,7 @@ struct DvdLib {
 impl DvdLib {
     fn load() -> Result<DvdLib, String> {
         let lib = load_any(if cfg!(windows) {
-            &["libdvdnav-4.dll", "libdvdnav.dll"]
+            &["libdvdnav-4.dll", "libdvdnav-5.dll", "libdvdnav-6.dll", "libdvdnav-7.dll", "libdvdnav.dll"]
         } else if cfg!(target_os = "macos") {
             &["libdvdnav.4.dylib", "libdvdnav.5.dylib", "libdvdnav.dylib"]
         } else {

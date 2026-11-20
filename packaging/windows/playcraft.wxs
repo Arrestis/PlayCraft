@@ -1,0 +1,50 @@
+<!--
+  PlayCraft Windows installer (WiX Toolset v5).
+  Built by scripts/package-windows.ps1, which passes:
+    Version  - e.g. 0.2.0
+    Stage    - folder holding playcraft.exe, engine\ and the documents
+    License  - license.rtf shown during setup
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="PlayCraft"
+           Manufacturer="PlayCraft contributors"
+           Version="$(Version)"
+           UpgradeCode="6B7D0E4A-3C1F-4F7B-9B8E-2A5C4D1E7F30"
+           Scope="perMachine"
+           Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of PlayCraft is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="PlayCraftIcon" SourceFile="$(Stage)\playcraft.exe" />
+    <Property Id="ARPPRODUCTICON" Value="PlayCraftIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Arrestis/PlayCraft" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Arrestis/PlayCraft/blob/main/docs/USER_GUIDE.md" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="PlayCraft" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="PlayCraft" Title="PlayCraft" Level="1">
+      <Component Directory="INSTALLFOLDER">
+        <File Id="PlayCraftExe" Source="$(Stage)\playcraft.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PlayCraft"
+                    Description="DVD, CD and Blu-ray player" WorkingDirectory="INSTALLFOLDER"
+                    Icon="PlayCraftIcon" Advertise="yes" />
+          <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="PlayCraft"
+                    Description="DVD, CD and Blu-ray player" WorkingDirectory="INSTALLFOLDER"
+                    Icon="PlayCraftIcon" Advertise="yes" />
+        </File>
+      </Component>
+      <!-- Playback engine, disc libraries, documents and licences -->
+      <Files Directory="INSTALLFOLDER" Include="$(Stage)\**">
+        <Exclude Files="$(Stage)\playcraft.exe" />
+      </Files>
+    </Feature>
+
+    <WixVariable Id="WixUILicenseRtf" Value="$(License)" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+  </Package>
+</Wix>

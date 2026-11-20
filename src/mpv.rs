@@ -58,7 +58,8 @@ type FnFree = unsafe extern "C" fn(*mut c_void);
 type FnWaitEvent = unsafe extern "C" fn(*mut c_void, f64) -> *mut MpvEvent;
 type FnReqLog = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
 type FnErrStr = unsafe extern "C" fn(c_int) -> *const c_char;
-type FnApiVer = unsafe extern "C" fn() -> u64;
+// C "unsigned long": 32 bits on Windows, 64 bits on Linux and macOS.
+type FnApiVer = unsafe extern "C" fn() -> std::ffi::c_ulong;
 type FnRcCreate = unsafe extern "C" fn(*mut *mut c_void, *mut c_void, *mut RenderParam) -> c_int;
 type FnRcSetCb =
     unsafe extern "C" fn(*mut c_void, Option<unsafe extern "C" fn(*mut c_void)>, *mut c_void);
@@ -184,6 +185,8 @@ pub fn search_dirs() -> Vec<PathBuf> {
         if let Some(d) = exe.parent() {
             dirs.push(d.to_path_buf());
             dirs.push(d.join("engine"));
+            // AppImage and similar layouts: <prefix>/bin/playcraft with libraries in <prefix>/lib.
+            dirs.push(d.join("..").join("lib"));
         }
     }
     dirs.push(crate::library::engine_dir());
@@ -240,7 +243,7 @@ impl Engine {
     }
 
     pub fn api_version(&self) -> String {
-        let v = unsafe { (self.api.client_api_version)() };
+        let v = unsafe { (self.api.client_api_version)() } as u64;
         format!("{}.{}", v >> 16, v & 0xffff)
     }
 }

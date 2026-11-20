@@ -71,7 +71,12 @@ fn main() {
     let _ = std::fs::create_dir_all(&engine);
     let work = out.join("downloads");
     let _ = std::fs::create_dir_all(&work);
-    let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") { "aarch64" } else { "x86_64" };
+    // 64-bit (x64/AMD64), 32-bit (x86) and ARM builds each get matching libraries.
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "aarch64",
+        Ok("x86") => "i686",
+        _ => "x86_64",
+    };
 
     if !engine.join("libmpv-2.dll").exists() {
         if let Err(e) = fetch_mpv(&engine, &work, arch) {
@@ -80,8 +85,21 @@ fn main() {
     }
     // Disc navigation (menus) and decryption libraries, with every dependency they need.
     let marker = engine.join(".disc-libs-v2");
-    if arch == "x86_64" && !marker.exists() {
-        match fetch_msys(&["libaacs", "libbdplus", "libbluray", "libdvdnav", "libdvdread", "libdvdcss", "gcc-libs", "libstdc++"], &engine, &work) {
+    // MSYS2 environment and package prefix for each processor.
+    let msys = match arch {
+        "x86_64" => Some(("mingw64", "x86_64")),
+        "i686" => Some(("mingw32", "i686")),
+        "aarch64" => Some(("clangarm64", "clang-aarch64")),
+        _ => None,
+    };
+    if let (Some((env, cpu)), false) = (msys, marker.exists()) {
+        let mut roots = vec!["libaacs", "libbdplus", "libbluray", "libdvdnav", "libdvdread", "libdvdcss"];
+        if cpu.starts_with("clang") {
+            roots.extend(["libc++", "libunwind", "libwinpthread"]);
+        } else {
+            roots.extend(["gcc-libs", "libstdc++"]);
+        }
+        match fetch_msys(&roots, &engine, &work, env, cpu) {
             Ok(()) => {
                 let _ = std::fs::write(&marker, "ok");
             }
@@ -92,17 +110,21 @@ fn main() {
 
 /// Download MSYS2 (mingw64) packages and everything they depend on, and copy their DLLs
 /// into `engine`.
-fn fetch_msys(roots: &[&str], engine: &Path, work: &Path) -> Result<(), String> {
-    const PREFIX: &str = "mingw-w64-x86_64-";
+/// `env` is the MSYS2 environment ("mingw64" for 64-bit, "mingw32" for 32-bit) and `cpu`
+/// the package architecture ("x86_64" or "i686").
+fn fetch_msys(roots: &[&str], engine: &Path, work: &Path, env: &str, cpu: &str) -> Result<(), String> {
+    let prefix_owned = format!("mingw-w64-{cpu}-");
+    #[allow(non_snake_case)]
+    let PREFIX: &str = &prefix_owned;
     let mirrors = [
-        "https://repo.msys2.org/mingw/mingw64/",
-        "https://mirror.msys2.org/mingw/mingw64/",
-        "https://mirrors.kernel.org/msys2/mingw/mingw64/",
-        "https://ftp.osuosl.org/pub/msys2/mingw/mingw64/",
+        format!("https://repo.msys2.org/mingw/{env}/"),
+        format!("https://mirror.msys2.org/mingw/{env}/"),
+        format!("https://mirrors.kernel.org/msys2/mingw/{env}/"),
+        format!("https://ftp.osuosl.org/pub/msys2/mingw/{env}/"),
     ];
     let mut found = None;
     let mut last_err = String::new();
-    for m in mirrors {
+    for m in &mirrors {
         match curl_text(m) {
             Ok(t) if t.contains(PREFIX) => {
                 found = Some((m, t));
@@ -127,7 +149,11 @@ fn fetch_msys(roots: &[&str], engine: &Path, work: &Path) -> Result<(), String> 
             continue;
         }
         // "cc-libs" is the C/C++ runtime, published as gcc-libs.
-        let pkg = if pkg == "cc-libs" { "gcc-libs".to_string() } else { pkg };
+        let pkg = if pkg == "cc-libs" {
+            if cpu.starts_with("clang") { "libc++".to_string() } else { "gcc-libs".to_string() }
+        } else {
+            pkg
+        };
         // The server writes "+" as "%2B" in file names (libstdc++).
         let prefix = format!("{PREFIX}{}-", pkg.replace('+', "%2B"));
         let name = links(&index, &prefix, ".pkg.tar.zst")
@@ -135,7 +161,7 @@ fn fetch_msys(roots: &[&str], engine: &Path, work: &Path) -> Result<(), String> 
             .filter(|n| n[prefix.len()..].starts_with(|c: char| c.is_ascii_digit()))
             .last();
         let Some(name) = name else {
-            if roots.contains(&pkg.as_str()) && pkg != "libdvdcss" {
+            if ["libaacs", "libbluray", "libdvdnav"].contains(&pkg.as_str()) {
                 return Err(format!("{pkg} not found"));
             }
             continue;
@@ -157,7 +183,7 @@ fn fetch_msys(roots: &[&str], engine: &Path, work: &Path) -> Result<(), String> 
             }
         }
     }
-    let bin = unpack.join("mingw64").join("bin");
+    let bin = unpack.join(env).join("bin");
     let rd = std::fs::read_dir(&bin).map_err(|e| e.to_string())?;
     for e in rd.flatten() {
         let n = e.file_name().to_string_lossy().to_string();
@@ -190,11 +216,11 @@ fn run(cmd: &mut Command) -> Result<String, String> {
 }
 
 fn curl_text(url: &str) -> Result<String, String> {
-    run(Command::new("curl.exe").args(["-sSfL", "-A", "playcraft-build", url]))
+    run(Command::new("curl.exe").args(["-sSfL", "--retry", "4", "--retry-all-errors", "-A", "playcraft-build", url]))
 }
 
 fn curl_file(url: &str, dest: &Path) -> Result<(), String> {
-    run(Command::new("curl.exe").args(["-sSfL", "-A", "playcraft-build", "-o"]).arg(dest).arg(url)).map(|_| ())
+    run(Command::new("curl.exe").args(["-sSfL", "--retry", "4", "--retry-all-errors", "-A", "playcraft-build", "-o"]).arg(dest).arg(url)).map(|_| ())
 }
 
 /// All href="…" values in a page that start with `prefix` and end with `suffix`.

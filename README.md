@@ -12,6 +12,22 @@ A free, open-source disc and media player for **Windows, macOS and Linux**.
 
 Playback runs on [libmpv](https://mpv.io), which includes FFmpeg, libdvdnav, libbluray and libcdio.
 
+## Download
+
+Get the latest version from **[Releases](https://github.com/Arrestis/PlayCraft/releases)**. Files are named `playcraft-<version>-<system>-<processor>.<type>`:
+
+- **Windows:** `.msi` installers and portable `.zip`s for x64 (Intel/AMD), ARM64 and x86 (32-bit)
+- **macOS:** `.dmg` (universal, plus Apple Silicon-only and Intel-only versions)
+- **Linux:** AppImage (with `.zsync` for updates), `.deb`, `.rpm`, Arch `.pkg.tar.zst` and `.tar.gz`, for x86_64 and aarch64 (riscv64: `.deb`, `.rpm`, `.tar.gz`)
+- `SHA256SUMS.txt` with a checksum for every file
+
+## Documentation
+
+- [Installing](docs/INSTALL.md)
+- [User guide](docs/USER_GUIDE.md): discs and menus, the remote, settings, keyboard shortcuts, activity log
+- [Building from source](docs/BUILDING.md)
+- [Changelog](CHANGELOG.md)
+
 ## Source code
 
 The code lives in the GitHub repository **PlayCraft**: https://github.com/Arrestis/PlayCraft

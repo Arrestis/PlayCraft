@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build PlayCraft for macOS.
-# Produces dist/PlayCraft.app (with the playback engine and Blu-ray libraries inside,
-# so nothing else needs installing) and dist/PlayCraft-macos.dmg.
+# Produces dist/PlayCraft.app (with the playback engine and disc libraries inside, so
+# nothing else needs installing) and dist/playcraft-<version>-macos-<arm64|x86_64>.dmg.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -73,6 +73,8 @@ EOF
 # Ad-hoc signature so macOS will open it (right-click > Open the first time).
 codesign --force --deep --sign - "$APP" || true
 
-rm -f dist/PlayCraft-macos.dmg
-hdiutil create -volname "PlayCraft" -srcfolder "$APP" -ov -format UDZO dist/PlayCraft-macos.dmg
+ARCH=$(uname -m)   # arm64 = Apple Silicon, x86_64 = Intel
+# Keep the .app too, so scripts/make-macos-universal.sh can combine both processors.
+tar -C dist -czf "dist/playcraft-app-$ARCH.tar.gz" PlayCraft.app
+bash scripts/make-macos-dmg.sh "$APP" "dist/playcraft-$VERSION-macos-$ARCH.dmg"
 echo "Done: see the dist folder."

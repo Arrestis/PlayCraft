@@ -29,6 +29,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Windows builds now also bundle libbluray, libdvdnav, libdvdread and libdvdcss, resolving
   their dependencies automatically and falling back to other download mirrors if one fails.
 - New app icon.
+- **Installers and downloads for every system**, named like the ArtCraft apps
+  (`playcraft-<version>-<system>-<processor>.<type>`):
+  - Windows `.msi` installers (Start-menu and desktop shortcuts) and portable `.zip`s for x64,
+    ARM64 and x86. Each bundles the engine and disc libraries for its own processor.
+  - macOS universal `.dmg`, plus Apple Silicon-only and Intel-only versions.
+  - Linux AppImage (with `.zsync` updates), `.deb`, `.rpm`, Arch `.pkg.tar.zst` and `.tar.gz`
+    for x86_64 and aarch64, and `.deb`/`.rpm`/`.tar.gz` for riscv64.
+  - `SHA256SUMS.txt`; all built by GitHub Actions and attached to each release.
+- Fixed the engine version shown in 32-bit builds.
+- Documentation: `docs/INSTALL.md`, `docs/USER_GUIDE.md` and `docs/BUILDING.md`.
 
 ### Fixed
 - In Blu-ray menus, moving the pointer no longer leaves every button it passed over

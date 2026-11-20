@@ -48,6 +48,29 @@ assets = [
     ["assets/playcraft.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
 ]
 
+# Cross-built .deb (e.g. riscv64), where dependencies can't be detected automatically.
+[package.metadata.deb.variants.cross]
+name = "playcraft"
+depends = "libmpv2 | libmpv1, libbluray2, libdvdnav4"
+
+# Fedora / openSUSE / RHEL package (cargo generate-rpm). The playback engine and disc
+# libraries are recommended so the package installs even where a repository lacks one.
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/playcraft", dest = "/usr/bin/playcraft", mode = "755" },
+    { source = "packaging/playcraft.desktop", dest = "/usr/share/applications/playcraft.desktop", mode = "644" },
+    { source = "assets/playcraft.png", dest = "/usr/share/icons/hicolor/512x512/apps/playcraft.png", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/playcraft/README.md", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/playcraft/LICENSE", mode = "644" },
+]
+
+[package.metadata.generate-rpm.recommends]
+mpv-libs = "*"
+libbluray = "*"
+libdvdnav = "*"
+libaacs = "*"
+libbdplus = "*"
+
 [profile.release]
 opt-level = 3
 
