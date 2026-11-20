@@ -1,6 +1,6 @@
 [package]
 name = "playcraft"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "PlayCraft - a free, open-source DVD, CD, Blu-ray and media player for Windows, macOS and Linux"
 license = "GPL-3.0-or-later"

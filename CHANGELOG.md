@@ -3,6 +3,15 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.3] - 2026-11-21
+
+### Fixed
+- **Blank icon after installing.** The icon file stored every size as PNG, which some parts of
+  Windows (such as installer shortcuts) show blank. It now uses classic bitmap images for the
+  small sizes, with PNG only for the large 256-pixel size. The installer's icon entry also now
+  ends in `.ico`, as Windows needs for Start-menu and desktop shortcuts.
+- All platforms (Windows x64, ARM64 and x86; macOS; Linux) are rebuilt with the 0.3.2
+  engine fix and this icon fix.
 ## [0.3.2] - 2026-11-21
 
 ### Fixed

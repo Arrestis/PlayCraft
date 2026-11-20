@@ -17,8 +17,9 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of PlayCraft is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <Icon Id="PlayCraftIcon" SourceFile="$(IconFile)" />
-    <Property Id="ARPPRODUCTICON" Value="PlayCraftIcon" />
+    <!-- The Id must end in .ico for Windows to show it on (advertised) shortcuts. -->
+    <Icon Id="PlayCraft.ico" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="PlayCraft.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/Arrestis/PlayCraft" />
     <Property Id="ARPHELPLINK" Value="https://github.com/Arrestis/PlayCraft/blob/main/docs/USER_GUIDE.md" />
 
@@ -33,10 +34,10 @@
         <File Id="PlayCraftExe" Source="$(Stage)\playcraft.exe" KeyPath="yes">
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PlayCraft"
                     Description="DVD, CD and Blu-ray player" WorkingDirectory="INSTALLFOLDER"
-                    Icon="PlayCraftIcon" Advertise="yes" />
+                    Icon="PlayCraft.ico" Advertise="yes" />
           <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="PlayCraft"
                     Description="DVD, CD and Blu-ray player" WorkingDirectory="INSTALLFOLDER"
-                    Icon="PlayCraftIcon" Advertise="yes" />
+                    Icon="PlayCraft.ico" Advertise="yes" />
         </File>
       </Component>
       <!-- Playback engine, disc libraries, documents and licences -->

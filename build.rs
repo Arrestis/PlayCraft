@@ -29,21 +29,12 @@ fn embed_icon() {
         return;
     };
     let mut frames = Vec::new();
-    for s in [16u32, 24, 32, 48, 64, 128, 256] {
+    for s in [16u32, 20, 24, 32, 40, 48, 64, 96, 128, 256] {
         let Some(img) = icon_rgba(&bytes, s) else { return };
-        match image::codecs::ico::IcoFrame::as_png(img.as_raw(), s, s, image::ExtendedColorType::Rgba8) {
-            Ok(f) => frames.push(f),
-            Err(e) => {
-                println!("cargo:warning=icon frame failed: {e}");
-                return;
-            }
-        }
+        frames.push((s, img.into_raw()));
     }
     let ico = out.join("app.ico");
-    let written = std::fs::File::create(&ico)
-        .map_err(|e| e.to_string())
-        .and_then(|f| image::codecs::ico::IcoEncoder::new(f).encode_images(&frames).map_err(|e| e.to_string()));
-    if let Err(e) = written {
+    if let Err(e) = std::fs::write(&ico, classic_ico(&frames)) {
         println!("cargo:warning=could not write the icon: {e}");
         return;
     }
@@ -55,6 +46,71 @@ fn embed_icon() {
     if let Err(e) = embed_resource::compile(&rc, embed_resource::NONE).manifest_optional() {
         println!("cargo:warning=could not embed the icon into the program file: {e}");
     }
+}
+
+/// Write a classic Windows .ico: bitmap images for every size Windows shows on shortcuts and
+/// menus (some parts of Windows, such as installer shortcuts, show PNG-only icons blank) and
+/// a PNG image only for the large 256-pixel size.
+fn classic_ico(frames: &[(u32, Vec<u8>)]) -> Vec<u8> {
+    let mut images: Vec<Vec<u8>> = Vec::new();
+    for (s, rgba) in frames {
+        let s = *s as usize;
+        if s >= 256 {
+            let mut png = Vec::new();
+            let enc = image::codecs::png::PngEncoder::new(&mut png);
+            use image::ImageEncoder;
+            if enc.write_image(rgba, s as u32, s as u32, image::ExtendedColorType::Rgba8).is_ok() {
+                images.push(png);
+            }
+            continue;
+        }
+        let mask_row = (s.div_ceil(32)) * 4;
+        let mut bmp = Vec::with_capacity(40 + s * s * 4 + mask_row * s);
+        // BITMAPINFOHEADER (height doubled: colour image plus the transparency mask)
+        bmp.extend_from_slice(&40u32.to_le_bytes());
+        bmp.extend_from_slice(&(s as i32).to_le_bytes());
+        bmp.extend_from_slice(&((s * 2) as i32).to_le_bytes());
+        bmp.extend_from_slice(&1u16.to_le_bytes());
+        bmp.extend_from_slice(&32u16.to_le_bytes());
+        bmp.extend_from_slice(&0u32.to_le_bytes());
+        bmp.extend_from_slice(&((s * s * 4) as u32).to_le_bytes());
+        bmp.extend_from_slice(&[0u8; 16]);
+        // Pixels, bottom row first, as blue-green-red-alpha.
+        for y in (0..s).rev() {
+            for x in 0..s {
+                let i = (y * s + x) * 4;
+                bmp.extend_from_slice(&[rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3]]);
+            }
+        }
+        // AND mask: 1 = transparent (used by very old renderers; alpha wins elsewhere).
+        for y in (0..s).rev() {
+            let mut row = vec![0u8; mask_row];
+            for x in 0..s {
+                if rgba[(y * s + x) * 4 + 3] < 128 {
+                    row[x / 8] |= 0x80 >> (x % 8);
+                }
+            }
+            bmp.extend_from_slice(&row);
+        }
+        images.push(bmp);
+    }
+    let mut ico = Vec::new();
+    ico.extend_from_slice(&[0, 0, 1, 0]);
+    ico.extend_from_slice(&(images.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * images.len();
+    for ((s, _), img) in frames.iter().zip(&images) {
+        let dim = if *s >= 256 { 0 } else { *s as u8 };
+        ico.extend_from_slice(&[dim, dim, 0, 0]);
+        ico.extend_from_slice(&1u16.to_le_bytes());
+        ico.extend_from_slice(&32u16.to_le_bytes());
+        ico.extend_from_slice(&(img.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += img.len();
+    }
+    for img in &images {
+        ico.extend_from_slice(img);
+    }
+    ico
 }
 
 fn main() {
