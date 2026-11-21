@@ -358,15 +358,7 @@ fn now_playing(app: &mut App, ui: &mut Ui) {
             _ => app.toggle_pause(),
         }
     }
-    if menu {
-        ui.painter().text(
-            rect.center_bottom() - vec2(0.0, 14.0),
-            Align2::CENTER_BOTTOM,
-            "Disc menu: click a button, or use the arrow keys and Enter",
-            FontId::proportional(13.0),
-            Color32::from_white_alpha(150),
-        );
-    }
+    // No hint text over the disc menu: the picture stays clean.
     resp.context_menu(|ui| more_menu(app, ui));
     if !app.fullscreen {
         // Small back arrow, like the other pages.

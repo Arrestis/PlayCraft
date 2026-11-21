@@ -485,8 +485,10 @@ impl Player {
             if handle.is_null() {
                 return Err("the engine could not start".into());
             }
-            let base: [(&str, &str); 14] = [
+            let base: [(&str, &str); 15] = [
                 ("vo", "libmpv"),
+                // No engine text drawn over the picture (subtitles still show).
+                ("osd-level", "0"),
                 ("idle", "yes"),
                 ("keep-open", "no"),
                 ("terminal", "no"),

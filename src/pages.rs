@@ -511,6 +511,13 @@ pub fn disc_page(app: &mut App, ui: &mut Ui, i: usize) {
                 DiscKind::Empty => "Insert a DVD, CD or Blu-ray and it will appear here automatically.",
             };
             ui.label(RichText::new(note).color(TEXT_DIM));
+            if matches!(d.kind, DiscKind::BluRay | DiscKind::UhdBluRay) {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Blu-ray codec information:").color(TEXT_DIM));
+                    ui.hyperlink_to(crate::aacs::CODEC_INFO_URL, crate::aacs::CODEC_INFO_URL);
+                });
+            }
         });
     });
     if let Some(a) = action {
@@ -897,6 +904,11 @@ pub fn settings_page(app: &mut App, ui: &mut Ui) {
                 ui.add_space(12.0);
                 ui.label(RichText::new("Blu-ray and Ultra HD Blu-ray").strong());
                 ui.label(RichText::new("Blu-ray discs play through libbluray. Most commercial discs are encrypted with AACS; open-source players need the libaacs library and a key file (KEYDB.cfg) that you provide. Unprotected discs, home-made discs and your own backup folders or ISOs play without it.").color(TEXT_DIM));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Blu-ray codec information:").color(TEXT_DIM));
+                    ui.hyperlink_to(crate::aacs::CODEC_INFO_URL, crate::aacs::CODEC_INFO_URL)
+                        .on_hover_text("Opens in your web browser");
+                });
                 ui.add_space(6.0);
                 let kp = library::keydb_path();
                 let have = kp.as_ref().is_some_and(|p| p.exists());

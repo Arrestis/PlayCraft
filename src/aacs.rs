@@ -7,6 +7,8 @@ use std::sync::OnceLock;
 
 pub const PROJECT_URL: &str = "https://www.videolan.org/developers/libaacs.html";
 pub const SOURCE_URL: &str = "https://code.videolan.org/videolan/libaacs";
+/// Blu-ray codec information site the person asked to link to.
+pub const CODEC_INFO_URL: &str = "https://fvonline-db.bplaced.net/";
 
 #[derive(Clone, Debug)]
 pub struct AacsInfo {

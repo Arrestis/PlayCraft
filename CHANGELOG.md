@@ -3,6 +3,17 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.4] - 2026-11-21
+
+### Changed
+- **No text over disc menus or the picture.** The "Disc menu: click a button, or use the arrow
+  keys and Enter" hint is gone, and the playback engine's own on-screen messages are turned
+  off. Subtitles still show.
+
+### Added
+- A **Blu-ray codec information** link (https://fvonline-db.bplaced.net/) under
+  *Settings › Discs & Blu-ray* and on Blu-ray and Ultra HD Blu-ray disc pages.
+
 ## [0.3.3] - 2026-11-21
 
 ### Fixed
