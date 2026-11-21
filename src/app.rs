@@ -1076,6 +1076,9 @@ impl App {
                     let title = self.current.as_ref().map(|c| c.title.clone()).unwrap_or_default();
                     let disc = self.current.as_ref().and_then(|c| c.disc);
                     let hint = match disc {
+                        Some(DiscKind::BluRay | DiscKind::UhdBluRay) if crate::aacs::info().is_none() => {
+                            " The Blu-ray decryption library (libaacs) isn't installed: download it in Settings › Discs & Blu-ray."
+                        }
                         Some(DiscKind::BluRay | DiscKind::UhdBluRay) => {
                             " This looks like a copy-protected Blu-ray: open its disc page to hand it to a licensed player you own, or import your own key file (Settings › Discs & Blu-ray)."
                         }
@@ -1323,7 +1326,12 @@ fn set_nav_mode(p: &Player, nav: Option<crate::nav::NavKind>, subs_on: bool) {
         None => {
             p.set("demuxer-lavf-format", "");
             p.set("demuxer-lavf-linearize-timestamps", "auto");
-            p.set("demuxer-lavf-probesize", "0");
+            // Back to the engine's own default (newer engines refuse 0 here).
+            let probe = p
+                .get_string("option-info/demuxer-lavf-probesize/default-value")
+                .filter(|v| v.parse::<i64>().is_ok_and(|n| n >= 32))
+                .unwrap_or_else(|| "5000000".into());
+            p.set("demuxer-lavf-probesize", &probe);
             p.set("demuxer-lavf-analyzeduration", "0");
             p.set("cache", "auto");
             p.set("demuxer-readahead-secs", "1");
@@ -1377,5 +1385,108 @@ pub fn setup_library_paths() {
             if let Ok(joined) = std::env::join_paths(paths) {
                 std::env::set_var("PATH", joined);
             }
+            // libbluray can't find the decryption libraries' helpers on its own (Windows).
+            crate::aacs::preload();
         }
+}
+
+/// `playcraft --check-disc <drive>`: report what the engine and the disc navigator can read
+/// from a disc. Returns the exit code (0 when the disc plays one way or another).
+pub fn check_disc(device: &str) -> i32 {
+    let device = discs::device_root_pub(device);
+    println!("Checking disc at {device}");
+    let engine = match Engine::locate() {
+        Ok(e) => e,
+        Err(e) => {
+            println!("FAILED  playback engine: {e}");
+            return 1;
+        }
+    };
+    println!("OK      playback engine: {}", engine.path);
+    let kind = discs::classify_folder(Path::new(&device));
+    println!("INFO    disc kind: {kind:?}");
+    let ctx = egui::Context::default();
+    let p = match Player::new(&engine, &ctx, &[("ao", "null".into()), ("vid", "no".into())]) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("FAILED  engine start: {e}");
+            return 1;
+        }
+    };
+    let protos = p.get_string("protocol-list").unwrap_or_default();
+    let has = |n: &str| protos.split(['\n', ',', ' ']).any(|x| x.trim().trim_matches('"').trim_matches(['[', ']']) == n);
+    for n in ["bd", "bluray", "dvd", "dvdnav", "cdda"] {
+        println!("{}  engine reader {n}://", if has(n) { "OK     " } else { "MISSING" });
+    }
+    let nav_kind = match kind {
+        DiscKind::DvdVideo => Some(crate::nav::NavKind::Dvd),
+        DiscKind::BluRay | DiscKind::UhdBluRay => Some(crate::nav::NavKind::Bluray),
+        _ => None,
+    };
+    let mut ok = false;
+    if let Some(nk) = nav_kind {
+        match crate::nav::NavSession::open(nk, &device, "en") {
+            Ok(s) => {
+                let cancel = AtomicBool::new(false);
+                let start = Instant::now();
+                let mut buf = vec![0u8; 1 << 16];
+                let mut total = 0u64;
+                let mut why = String::new();
+                while start.elapsed() < Duration::from_secs(15) && total < 16 << 20 {
+                    let n = s.read(&mut buf, &cancel);
+                    if n <= 0 {
+                        why = s.shared.error.lock().unwrap().clone().unwrap_or_else(|| "end of disc".into());
+                        break;
+                    }
+                    total += n as u64;
+                }
+                if total > 0 {
+                    ok = true;
+                }
+                println!("{}  menu navigator read {} KB{}", if total > 0 { "OK     " } else { "FAILED " }, total / 1024, if why.is_empty() { String::new() } else { format!(" ({why})") });
+            }
+            Err(e) => println!("FAILED  menu navigator: {e}"),
+        }
+    }
+    for item in disc_play_candidates(kind, &device) {
+        if !item.1.is_empty() {
+            p.set(item.1, &item.2);
+        }
+        let _ = p.command(&["loadfile", &item.0, "replace"]);
+        let start = Instant::now();
+        let mut result = None;
+        let mut logs = Vec::new();
+        while start.elapsed() < Duration::from_secs(25) && result.is_none() {
+            for ev in p.poll_events() {
+                match ev {
+                    PlayerEvent::FileLoaded => result = Some(Ok(())),
+                    PlayerEvent::EndFile { error, .. } => result = Some(Err(logs.last().cloned().unwrap_or(error))),
+                    PlayerEvent::Log(l) => logs.push(l),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        match result {
+            Some(Ok(())) => {
+                ok = true;
+                let d = p.get_f64("duration").unwrap_or(0.0);
+                println!("OK      plays as {} ({})", item.0, fmt_time(d));
+            }
+            Some(Err(e)) => println!("FAILED  {}: {e}", item.0),
+            None => println!("FAILED  {}: no answer in 25 s", item.0),
+        }
+        let _ = p.command(&["stop"]);
+    }
+    if ok {
+        0
+    } else {
+        1
+    }
+}
+
+/// Ways to play a disc's main movie without its menus, best first:
+/// (address, engine option to set, option value).
+pub fn disc_play_candidates(kind: DiscKind, device: &str) -> Vec<(String, &'static str, String)> {
+    let (url, opt, dev) = discs::engine_url(kind, device, None);
+    vec![(url, opt, dev)]
 }

@@ -3,6 +3,21 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.5] - 2026-11-21
+
+### Fixed
+- **Protected Blu-rays failed with "The protocol is either unsupported".** On Windows the
+  Blu-ray reader couldn't load the decryption library (libaacs): it looks for that library's
+  helpers only next to the program, not in the engine folder. It only worked if the
+  *Discs & Blu-ray* settings page had been opened first. PlayCraft now loads the decryption
+  libraries at start-up, so protected discs play with and without their menus.
+- Going back from disc menus to normal playback no longer trips the engine's
+  "probesize must be >= 32" error.
+
+### Added
+- `playcraft --check-disc <drive>` reports what the engine and the menu reader can read from a
+  disc (for troubleshooting).
+
 ## [0.3.4] - 2026-11-21
 
 ### Changed

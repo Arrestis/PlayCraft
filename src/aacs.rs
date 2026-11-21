@@ -42,6 +42,30 @@ fn candidates() -> Vec<PathBuf> {
     c
 }
 
+/// Load the Blu-ray decryption libraries (libaacs, libbdplus) once, with their helper
+/// libraries, and keep them loaded.
+///
+/// libbluray opens them on Windows with a search limited to the program's own folder and
+/// System32, so their helpers in the engine folder (libgcrypt, libgpg-error…) are never found
+/// and it reports "No usable AACS libraries found". Once they are already loaded, libbluray's
+/// own load of the same file simply reuses them.
+pub fn preload() {
+    let found = info();
+    crate::log::info(match &found {
+        Some(i) => format!("Blu-ray decryption library ready: libaacs {} ({})", i.version, i.path),
+        None => "Blu-ray decryption library (libaacs) not found".to_string(),
+    });
+    let ext = if cfg!(windows) { "dll" } else if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    if let Some(p) = std::env::var_os("LIBBDPLUS_PATH") {
+        let p = PathBuf::from(p).with_extension(ext);
+        if p.exists() {
+            if let Ok(lib) = crate::mpv::open_library(&p) {
+                std::mem::forget(lib);
+            }
+        }
+    }
+}
+
 /// The libaacs the player will use, if any. Looked up once.
 pub fn info() -> Option<AacsInfo> {
     static INFO: OnceLock<Option<AacsInfo>> = OnceLock::new();

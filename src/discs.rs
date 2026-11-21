@@ -391,3 +391,8 @@ fn device_root(device: &str) -> String {
         device.to_string()
     }
 }
+
+/// The disc's root folder as the engine wants it ("E:" becomes "E:\").
+pub fn device_root_pub(device: &str) -> String {
+    device_root(device)
+}

@@ -77,6 +77,16 @@ fn main() -> eframe::Result<()> {
                 log::info(format!("Engine check: {}", if ok { "passed" } else { "FAILED" }));
                 std::process::exit(if ok { 0 } else { 1 });
             }
+            // playcraft --check-disc <drive or folder>: report what the engine can read from a
+            // disc (its disc readers, the menu navigator, the first seconds of data) and exit.
+            Some("--check-disc") => {
+                let dev = args.next().map(|a| a.to_string_lossy().to_string()).unwrap_or_default();
+                library::migrate_old_data();
+                log::init();
+                embed::prepare();
+                app::setup_library_paths();
+                std::process::exit(app::check_disc(&dev));
+            }
             // playcraft --install-engine-to <folder>: download the playback engine there and
             // exit (a command-line way to install it on a PC where the button doesn't work).
             Some("--install-engine-to") => {
