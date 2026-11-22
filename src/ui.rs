@@ -482,7 +482,13 @@ fn control_bar(app: &mut App, ui: &mut Ui) {
             ui.label(RichText::new(truncate(&title, 36)).size(14.0).color(TEXT));
             ui.horizontal(|ui| {
                 let t = app.seek_preview.unwrap_or(app.time);
-                ui.label(RichText::new(format!("{} / {}", fmt_time(t), fmt_time(app.duration))).size(12.0).color(TEXT_DIM));
+                let text = if app.nav.is_some() && app.duration <= 0.0 {
+                    // The disc is in its menus (or the length isn't known): no clock to show.
+                    if app.nav_in_menu() { "Disc menu".to_string() } else { fmt_time(t) }
+                } else {
+                    format!("{} / {}", fmt_time(t), fmt_time(app.duration))
+                };
+                ui.label(RichText::new(text).size(12.0).color(TEXT_DIM));
                 if let Some(c) = &app.current {
                     badge(ui, &c.badge());
                 }

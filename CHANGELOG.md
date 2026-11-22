@@ -3,6 +3,22 @@
 All notable changes to PlayCraft are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.6] - 2026-11-22
+
+### Fixed
+- **Black DVD menus.** When a DVD menu stopped on its still picture, the engine waited for
+  sound that never comes and the decoder held the picture back, so only the button bar
+  showed on black. PlayCraft now times still pictures by the clock, never pauses to
+  "buffer" in disc mode, and re-sends the still's picture so the decoder releases it.
+- **DVD clock showed "0:22 / 0:00".** The time and length now come from the disc's title
+  (libdvdnav), so the clock, progress bar and click-to-seek work; menus show "Disc menu".
+- DVD skip forward/back uses the title's real data rate instead of a fixed guess.
+
+### Added
+- `playcraft --check-disc` also accepts DVD/Blu-ray image files and traces a DVD's first menu.
+- Troubleshooting switches: `PLAYCRAFT_ENGINE_LOG=v` records the engine's messages and
+  `PLAYCRAFT_NAV_LOG=1` the disc navigator's events in the activity log.
+
 ## [0.3.5] - 2026-11-21
 
 ### Fixed

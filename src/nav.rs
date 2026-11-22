@@ -56,6 +56,9 @@ pub struct NavShared {
     pub bytes: AtomicU64,
     pub restart: AtomicBool,
     pub show_subs: AtomicBool,
+    /// The disc is holding a still picture (a menu waiting for the viewer): no sound comes,
+    /// so the engine must show the picture without waiting for audio.
+    pub still: AtomicBool,
     /// (position, length) as fractions or seconds, see `NavSession::progress`.
     pub progress: Mutex<(f64, f64)>,
 }
@@ -158,6 +161,10 @@ struct DvdLib {
     next_pg: unsafe extern "C" fn(P) -> c_int,
     prev_pg: unsafe extern "C" fn(P) -> c_int,
     go_up: unsafe extern "C" fn(P) -> c_int,
+    /// dvdnav_current_title_info(nav, &title, &part)
+    title_info: Option<unsafe extern "C" fn(P, *mut i32, *mut i32) -> c_int>,
+    /// dvdnav_describe_title_chapters(nav, title, &times, &duration) – duration in 1/90000 s.
+    describe_title: Option<unsafe extern "C" fn(P, i32, *mut *mut u64, *mut u64) -> u32>,
 }
 
 impl DvdLib {
@@ -197,6 +204,8 @@ impl DvdLib {
             next_pg: sym!(lib, "dvdnav_next_pg_search"),
             prev_pg: sym!(lib, "dvdnav_prev_pg_search"),
             go_up: sym!(lib, "dvdnav_go_up"),
+            title_info: unsafe { lib.get(b"dvdnav_current_title_info\0").ok().map(|s| *s) },
+            describe_title: unsafe { lib.get(b"dvdnav_describe_title_chapters\0").ok().map(|s| *s) },
             _lib: lib,
         })
     }
@@ -486,6 +495,10 @@ struct Dvd {
     in_vts: bool,
     still: Option<(Option<Instant>, bool)>,
     last_pad: Instant,
+    /// The video packs of the current VOBU, sent again when a still picture starts.
+    vobu_video: Vec<u8>,
+    /// (title number, its length in seconds), looked up once per title.
+    title_len: std::cell::Cell<(i32, f64)>,
 }
 
 enum Step {
@@ -493,6 +506,15 @@ enum Step {
     Again,
     Wait,
     Eof,
+}
+
+/// Whether a 2048-byte DVD pack carries video (an MPEG pack header followed by a video PES).
+fn is_video_pack(b: &[u8]) -> bool {
+    if b.len() < 18 || b[..4] != [0, 0, 1, 0xBA] {
+        return false;
+    }
+    let pos = 14 + (b[13] & 7) as usize;
+    b.len() >= pos + 4 && b[pos..pos + 3] == [0, 0, 1] && (0xE0..=0xEF).contains(&b[pos + 3])
 }
 
 impl Dvd {
@@ -522,14 +544,22 @@ impl Dvd {
             in_vts: false,
             still: None,
             last_pad: Instant::now(),
+            vobu_video: Vec::new(),
+            title_len: std::cell::Cell::new((-1, 0.0)),
         })
     }
 
     fn step(&mut self, out: &mut Vec<u8>, shared: &NavShared) -> Result<Step, String> {
         if let Some((deadline, injected)) = self.still.as_mut() {
             if !*injected {
-                // A video "sequence end" makes the decoder show the still picture now.
-                out.extend_from_slice(&[0, 0, 1, 0xE0, 0, 7, 0x81, 0, 0, 0, 0, 1, 0xB7]);
+                // A video "sequence end" makes the decoder show the still picture now. The
+                // decoder only does so for a packet that is exactly the 4-byte end code, and the
+                // first one often picks up a stray byte left over from the picture before it,
+                // so send it twice.
+                // Also send the still's own video again first: a new picture arriving makes the
+                // decoder hand over the one it holds back, which is the still picture.
+                out.extend_from_slice(&self.vobu_video);
+                out.extend_from_slice(&[0, 0, 1, 0xE0, 0, 11, 0x81, 0, 0, 0, 0, 1, 0xB7, 0, 0, 1, 0xB7]);
                 *injected = true;
                 return Ok(Step::Data);
             }
@@ -548,9 +578,16 @@ impl Dvd {
             return Err("the DVD could not be read".into());
         }
         let len = (len.max(0) as usize).min(2048);
+        if ev != 0 && ev != 7 && std::env::var_os("PLAYCRAFT_NAV_LOG").is_some() {
+            let p = i32::from_ne_bytes([block[0], block[1], block[2], block[3]]);
+            crate::log::info(format!("DVD event {ev} (param {p}), in title={}", unsafe { (self.lib.is_vts)(self.nav) } == 1));
+        }
         match ev {
             0 => {
                 self.parse_spu(&block[..len], shared);
+                if is_video_pack(&block[..len]) && self.vobu_video.len() < 4 << 20 {
+                    self.vobu_video.extend_from_slice(&block[..len]);
+                }
                 out.extend_from_slice(&block[..len]);
                 Ok(Step::Data)
             }
@@ -582,6 +619,7 @@ impl Dvd {
                 Ok(Step::Again)
             }
             7 => {
+                self.vobu_video.clear();
                 out.extend_from_slice(&block[..len]);
                 self.update_highlight(shared);
                 Ok(Step::Data)
@@ -813,10 +851,12 @@ impl Dvd {
                     }
                 }
                 NavInput::Skip(secs) => {
-                    // Roughly 0.5 MB per second of DVD video.
+                    // Sectors per second from the title's length (roughly 250 when unknown).
+                    let total = self.title_seconds();
                     let (mut pos, mut len) = (0u32, 0u32);
                     if (lib.get_position)(self.nav, &mut pos, &mut len) == 1 && len > 0 {
-                        let target = (pos as f64 + secs * 250.0).clamp(0.0, len as f64 - 1.0);
+                        let rate = if total > 0.0 { len as f64 / total } else { 250.0 };
+                        let target = (pos as f64 + secs * rate).clamp(0.0, len as f64 - 1.0);
                         (lib.sector_search)(self.nav, target as i64, 0);
                         restart = true;
                     }
@@ -832,10 +872,35 @@ impl Dvd {
         self.update_highlight(shared);
     }
 
+    /// The length of the title being played, in seconds (0 in menus or when unknown).
+    fn title_seconds(&self) -> f64 {
+        if !self.in_vts {
+            return 0.0;
+        }
+        let (Some(info), Some(describe)) = (self.lib.title_info, self.lib.describe_title) else { return 0.0 };
+        let (mut title, mut part) = (0i32, 0i32);
+        if unsafe { info(self.nav, &mut title, &mut part) } != 1 || title < 1 {
+            return 0.0;
+        }
+        let (cached, secs) = self.title_len.get();
+        if cached == title {
+            return secs;
+        }
+        let mut times: *mut u64 = std::ptr::null_mut();
+        let mut dur = 0u64;
+        // The small chapter list it allocates is left alone: it belongs to the library's heap.
+        unsafe { describe(self.nav, title, &mut times, &mut dur) };
+        let secs = dur as f64 / 90_000.0;
+        self.title_len.set((title, secs));
+        secs
+    }
+
+    /// (position, length) in seconds while a title plays; (0, 0) in menus.
     fn progress(&self) -> (f64, f64) {
+        let total = self.title_seconds();
         let (mut pos, mut len) = (0u32, 0u32);
-        if unsafe { (self.lib.get_position)(self.nav, &mut pos, &mut len) } == 1 && len > 0 {
-            (pos as f64 / len as f64, 1.0)
+        if total > 0.0 && unsafe { (self.lib.get_position)(self.nav, &mut pos, &mut len) } == 1 && len > 0 {
+            ((pos as f64 / len as f64) * total, total)
         } else {
             (0.0, 0.0)
         }
@@ -1233,9 +1298,21 @@ impl NavSession {
     /// Fill `buf` for the engine. Blocks while the disc waits (menus, stills).
     pub fn read(&self, buf: &mut [u8], cancel: &AtomicBool) -> i64 {
         let mut spins = 0u32;
+        let debug = std::env::var_os("PLAYCRAFT_NAV_LOG").is_some();
+        let mut last_note = Instant::now();
+        if debug {
+            crate::log::info(format!("DVD read: called for {} bytes (pending lock free: {}, navigator lock free: {})", buf.len(), self.pending.try_lock().is_ok(), self.backend.try_lock().is_ok()));
+        }
         loop {
             if cancel.load(Ordering::Acquire) {
+                if debug {
+                    crate::log::info("DVD read: cancelled");
+                }
                 return -1;
+            }
+            if debug && last_note.elapsed() > Duration::from_secs(1) {
+                last_note = Instant::now();
+                crate::log::info(format!("DVD read: waiting (buf {}, still {})", buf.len(), self.shared.still.load(Ordering::Acquire)));
             }
             {
                 // Never hold the data buffer and the navigator at the same time: the screen
@@ -1253,11 +1330,26 @@ impl NavSession {
                 let generation = self.input_gen.load(Ordering::Acquire);
                 let mut chunk = Vec::new();
                 let r = {
+                    if debug {
+                        crate::log::info("DVD read: taking the navigator");
+                    }
                     let mut be = self.backend.lock().unwrap();
-                    match &mut *be {
+                    if debug {
+                        crate::log::info("DVD read: stepping");
+                    }
+                    let r = match &mut *be {
                         Backend::Dvd(d) => d.step(&mut chunk, &self.shared),
                         Backend::Bd(b) => b.step(&mut chunk, &self.shared),
+                    };
+                    if debug {
+                        crate::log::info(format!("DVD read: stepped, {} bytes", chunk.len()));
                     }
+                    let still = match &*be {
+                        Backend::Dvd(d) => d.still.is_some(),
+                        Backend::Bd(b) => b.still,
+                    };
+                    self.shared.still.store(still, Ordering::Release);
+                    r
                 };
                 // Data read just before a button press belongs to the old screen; drop it.
                 if !chunk.is_empty() && self.input_gen.load(Ordering::Acquire) == generation {
@@ -1374,4 +1466,108 @@ pub unsafe fn stream_cancel(cookie: *mut StreamCookie) {
 
 pub unsafe fn stream_close(cookie: *mut StreamCookie) {
     drop(Box::from_raw(cookie));
+}
+
+/// Troubleshooting (`playcraft --check-disc`): follow a DVD from its start to its first menu
+/// and describe what the navigator sees (events, subpicture streams, highlights).
+pub fn trace_dvd(device: &str) -> Result<String, String> {
+    let shared = NavShared::default();
+    let mut d = Dvd::open(device, "en")?;
+    let start = Instant::now();
+    let mut events = std::collections::BTreeMap::<i32, u32>::new();
+    let mut subs = std::collections::BTreeMap::<u8, u32>::new();
+    let mut notes = Vec::new();
+    let mut blocks = 0u32;
+    let mut video_blocks = 0u32;
+    let mut cells = 0u32;
+    let mut dump: Vec<u8> = Vec::new();
+    while start.elapsed() < Duration::from_secs(20) {
+        let mut block = [0u8; 2048];
+        let (mut ev, mut len) = (0i32, 0i32);
+        if unsafe { (d.lib.next_block)(d.nav, block.as_mut_ptr(), &mut ev, &mut len) } != 1 {
+            notes.push("read error".to_string());
+            break;
+        }
+        *events.entry(ev).or_default() += 1;
+        let len = (len.max(0) as usize).min(2048);
+        match ev {
+            0 => {
+                blocks += 1;
+                let b = &block[..len];
+                if cells >= 2 {
+                    dump.extend_from_slice(b);
+                }
+                if b.len() >= 14 && b[..4] == [0, 0, 1, 0xBA] {
+                    let mut pos = 14 + (b[13] & 7) as usize;
+                    while pos + 6 <= b.len() && b[pos..pos + 3] == [0, 0, 1] {
+                        let id = b[pos + 3];
+                        let plen = u16::from_be_bytes([b[pos + 4], b[pos + 5]]) as usize;
+                        let end = (pos + 6 + plen).min(b.len());
+                        if (0xE0..=0xEF).contains(&id) {
+                            video_blocks += 1;
+                        }
+                        if id == 0xBD && pos + 9 < end {
+                            let data = pos + 9 + b[pos + 8] as usize;
+                            if data < end {
+                                *subs.entry(b[data]).or_default() += 1;
+                            }
+                        }
+                        if id == 0xB9 {
+                            break;
+                        }
+                        pos = end;
+                    }
+                }
+                d.parse_spu(b, &shared);
+            }
+            2 => {
+                let secs = i32::from_ne_bytes([block[0], block[1], block[2], block[3]]);
+                notes.push(format!("still {secs}s (menu={}, spu={}, highlight={:?})", !d.in_vts, d.spu.is_some(), d.highlight.map(|h| (h.sx, h.sy, h.ex, h.ey))));
+                if !d.in_vts {
+                    break;
+                }
+                unsafe { (d.lib.still_skip)(d.nav) };
+            }
+            3 => {
+                let w = i32::from_ne_bytes([block[0], block[1], block[2], block[3]]);
+                let lb = i32::from_ne_bytes([block[4], block[5], block[6], block[7]]);
+                let ps = i32::from_ne_bytes([block[8], block[9], block[10], block[11]]);
+                let lg = i32::from_ne_bytes([block[12], block[13], block[14], block[15]]);
+                notes.push(format!("subpicture stream change: wide={w} letterbox={lb} pan-scan={ps} logical={lg}"));
+                d.spu_id = if w < 0 || w & 0x80 != 0 { -1 } else { 0x20 | (w & 0x1f) };
+            }
+            6 => {
+                cells += 1;
+                d.in_vts = unsafe { (d.lib.is_vts)(d.nav) } == 1;
+                notes.push(format!("cell change (in title={})", d.in_vts));
+                d.update_highlight(&shared);
+            }
+            7 => d.update_highlight(&shared),
+            8 => {
+                notes.push("end".into());
+                break;
+            }
+            9 => {
+                d.update_highlight(&shared);
+                notes.push(format!("highlight {:?}", d.highlight.map(|h| (h.sx, h.sy, h.ex, h.ey))));
+            }
+            13 => unsafe {
+                (d.lib.wait_skip)(d.nav);
+            },
+            _ => {}
+        }
+        if notes.len() > 60 {
+            break;
+        }
+    }
+    if let Some(p) = std::env::var_os("PLAYCRAFT_TRACE_DUMP") {
+        let _ = std::fs::write(p, &dump);
+    }
+    let mut out = format!("blocks={blocks} video-packets={video_blocks} events={events:?} subpicture-substreams={:?} spu_id={:#x}\n", subs, d.spu_id);
+    for n in notes {
+        out.push_str("  ");
+        out.push_str(&n);
+        out.push('\n');
+    }
+    Ok(out)
 }

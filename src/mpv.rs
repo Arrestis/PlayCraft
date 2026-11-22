@@ -515,7 +515,9 @@ impl Player {
                 (api.terminate_destroy)(handle);
                 return Err(format!("the engine failed to initialise: {msg}"));
             }
-            (api.request_log_messages)(handle, cstr("warn").as_ptr());
+            // PLAYCRAFT_ENGINE_LOG=v (or debug…) records the engine's own messages, for troubleshooting.
+            let level = std::env::var("PLAYCRAFT_ENGINE_LOG").unwrap_or_else(|_| "warn".into());
+            (api.request_log_messages)(handle, cstr(&level).as_ptr());
             // Disc menus: the navigator feeds the engine through "discnav://".
             if let Some(add) = api.stream_cb_add_ro {
                 add(handle, cstr("discnav").as_ptr(), std::ptr::null_mut(), nav_open);

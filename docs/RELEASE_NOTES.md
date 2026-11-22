@@ -5,22 +5,28 @@ PlayCraft is a free, open-source DVD, CD and Blu-ray player for Windows, macOS a
 
 | System | Installer | Other |
 |---|---|---|
-| Windows 64-bit, Intel / AMD | `playcraft-0.3.5-windows-x64.msi` | `playcraft-0.3.5-windows-x64-portable.zip` |
-| Windows on ARM (Snapdragon, etc.) | `playcraft-0.3.5-windows-arm64.msi` | `playcraft-0.3.5-windows-arm64-portable.zip` |
-| Windows 32-bit (x86) | `playcraft-0.3.5-windows-x86.msi` | `playcraft-0.3.5-windows-x86-portable.zip` |
-| macOS (Apple Silicon and Intel) | `playcraft-0.3.5-macos-universal.dmg` | `-macos-arm64.dmg`, `-macos-x86_64.dmg` |
-| Linux, any distribution | `playcraft-0.3.5-linux-x86_64.AppImage`, `-linux-aarch64.AppImage` | `.AppImage.zsync` for updaters |
-| Debian, Ubuntu, Mint, Pop!_OS | `playcraft-0.3.5-linux-x86_64.deb`, `-aarch64.deb`, `-riscv64.deb` | |
-| Fedora, openSUSE, RHEL, Rocky | `playcraft-0.3.5-linux-x86_64.rpm`, `-aarch64.rpm`, `-riscv64.rpm` | |
-| Arch, Manjaro, EndeavourOS | `playcraft-0.3.5-linux-x86_64.pkg.tar.zst`, `-aarch64.pkg.tar.zst` | |
-| Other Linux | `playcraft-0.3.5-linux-<arch>.tar.gz` | |
+| Windows 64-bit, Intel / AMD | `playcraft-0.3.6-windows-x64.msi` | `playcraft-0.3.6-windows-x64-portable.zip` |
+| Windows on ARM (Snapdragon, etc.) | `playcraft-0.3.6-windows-arm64.msi` | `playcraft-0.3.6-windows-arm64-portable.zip` |
+| Windows 32-bit (x86) | `playcraft-0.3.6-windows-x86.msi` | `playcraft-0.3.6-windows-x86-portable.zip` |
+| macOS (Apple Silicon and Intel) | `playcraft-0.3.6-macos-universal.dmg` | `-macos-arm64.dmg`, `-macos-x86_64.dmg` |
+| Linux, any distribution | `playcraft-0.3.6-linux-x86_64.AppImage`, `-linux-aarch64.AppImage` | `.AppImage.zsync` for updaters |
+| Debian, Ubuntu, Mint, Pop!_OS | `playcraft-0.3.6-linux-x86_64.deb`, `-aarch64.deb`, `-riscv64.deb` | |
+| Fedora, openSUSE, RHEL, Rocky | `playcraft-0.3.6-linux-x86_64.rpm`, `-aarch64.rpm`, `-riscv64.rpm` | |
+| Arch, Manjaro, EndeavourOS | `playcraft-0.3.6-linux-x86_64.pkg.tar.zst`, `-aarch64.pkg.tar.zst` | |
+| Other Linux | `playcraft-0.3.6-linux-<arch>.tar.gz` | |
 
 `SHA256SUMS.txt` lists a checksum for every file.
 
 To install, see [docs/INSTALL.md](https://github.com/Arrestis/PlayCraft/blob/main/docs/INSTALL.md).
 For how to use PlayCraft, see [docs/USER_GUIDE.md](https://github.com/Arrestis/PlayCraft/blob/main/docs/USER_GUIDE.md).
 
-## What's new in 0.3.5
+## What's new in 0.3.6
+
+- **DVD menus show their picture.** Still menus (a menu picture waiting for you to choose) stayed black with only a grey button bar. The menu picture now appears, and choosing a button moves on through the disc's menus into the film.
+- **DVD time and progress bar work.** While a DVD film plays, the player shows the time and the film's length (it used to show "0:22 / 0:00"), and the progress bar moves and can be clicked to jump. In a disc menu it says "Disc menu".
+- Skipping forward and back on a DVD now jumps by the right amount of time.
+
+## Also in 0.3.5
 
 - **Protected Blu-rays play again.** Fixes "Couldn't play … The protocol is either unsupported, or was disabled at compile-time". On Windows the Blu-ray reader couldn't load the decryption library (libaacs) unless the Discs & Blu-ray settings page had been opened first. PlayCraft now loads it at start-up, so protected discs play with and without their menus (you still need your own key file).
 - Going from disc menus back to normal playback no longer causes a "probesize" engine error.

@@ -221,6 +221,8 @@ pub struct App {
     pub logo_tex: Option<TextureHandle>,
     pub nav: Option<Arc<crate::nav::NavSession>>,
     pub nav_fallback: Option<PlayItem>,
+    /// The disc navigator is holding a still picture (see `NavShared::still`).
+    pub nav_still: bool,
     pub skip_menus_next: bool,
     pub nav_tex: Option<TextureHandle>,
     pub nav_gen: u64,
@@ -311,6 +313,7 @@ impl App {
             video_tex: None,
             nav: None,
             nav_fallback: None,
+            nav_still: false,
             skip_menus_next: false,
             nav_tex: None,
             nav_gen: 0,
@@ -484,6 +487,7 @@ impl App {
         self.remember_position();
         // Disc menus: drive the disc with its own navigator when possible.
         self.nav = None;
+        self.nav_still = false;
         crate::nav::set_current(None);
         let skip_menus = std::mem::take(&mut self.skip_menus_next);
         let nav_kind = match item.disc {
@@ -976,7 +980,8 @@ impl App {
         if let Some(nav) = self.nav.clone() {
             let err = nav.shared.error.lock().unwrap().clone();
             let stalled = nav.shared.bytes.load(std::sync::atomic::Ordering::Relaxed) == 0 && nav.started.elapsed() > Duration::from_secs(20);
-            if err.is_some() || stalled {
+            let failed = err.is_some() || stalled;
+            if failed {
                 let why = err.unwrap_or_else(|| "the disc's menus didn't start".into());
                 crate::log::warn(format!("Disc menus: falling back to the main movie: {why}"));
                 if let Some(item) = self.nav_fallback.take() {
@@ -985,7 +990,42 @@ impl App {
                     self.play(item);
                     return;
                 }
-            } else if nav.shared.restart.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            }
+            // A still picture (menu waiting for the viewer) has no sound: time the picture by
+            // the clock instead of the audio, or the engine waits for sound and stays black.
+            let still = nav.shared.still.load(std::sync::atomic::Ordering::Acquire);
+            if still != self.nav_still {
+                self.nav_still = still;
+                if let Some(p) = &self.player {
+                    p.set("video-sync", if still { "desync" } else { "audio" });
+                }
+            }
+            // Test hook (PLAYCRAFT_TEST_MENU_ENTER=<n>): choose the highlighted menu button, up
+            // to n times, each once a menu has been on screen for two seconds.
+            {
+                use std::sync::atomic::{AtomicU32, Ordering as O};
+                static PRESSED: AtomicU32 = AtomicU32::new(0);
+                static SINCE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+                let times = std::env::var("PLAYCRAFT_TEST_MENU_ENTER").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                if PRESSED.load(O::Relaxed) < times {
+                    static LAST: AtomicU32 = AtomicU32::new(9);
+                    let m = nav.shared.in_menu.load(O::Acquire) as u32 * 2 + still as u32;
+                    if LAST.swap(m, O::Relaxed) != m {
+                        crate::log::info(format!("Test: in_menu={} still={still}", m >= 2));
+                    }
+                    let mut since = SINCE.lock().unwrap();
+                    if nav.shared.in_menu.load(O::Acquire) {
+                        let t = *since.get_or_insert_with(Instant::now);
+                        if t.elapsed() > Duration::from_secs(2) {
+                            PRESSED.fetch_add(1, O::Relaxed);
+                            *since = None;
+                            crate::log::info("Test: pressing Enter in the disc menu");
+                            nav.input(crate::nav::NavInput::Enter);
+                        }
+                    }
+                }
+            }
+            if !failed && nav.shared.restart.swap(false, std::sync::atomic::Ordering::AcqRel) {
                 if let Some(p) = &self.player {
                     let _ = p.command(&["loadfile", "discnav://disc", "replace"]);
                     p.set("pause", "no");
@@ -1002,6 +1042,9 @@ impl App {
                 PlayerEvent::FileLoaded => loaded = true,
                 PlayerEvent::EndFile { reason, error } => ended = Some((reason, error)),
                 PlayerEvent::Log(l) => {
+                    if std::env::var_os("PLAYCRAFT_ENGINE_LOG").is_some() {
+                        crate::log::info(format!("engine: {l}"));
+                    }
                     self.log.push_back(l);
                     if self.log.len() > 300 {
                         self.log.pop_front();
@@ -1025,8 +1068,10 @@ impl App {
                     self.duration = len;
                 }
                 crate::nav::NavKind::Dvd => {
-                    self.duration = 0.0;
-                    self.nav_fraction = pos;
+                    // Seconds into the title and its length; both 0 in menus.
+                    self.time = pos;
+                    self.duration = len;
+                    self.nav_fraction = if len > 0.0 { pos / len } else { 0.0 };
                 }
             }
             self.chapter = -1;
@@ -1322,6 +1367,9 @@ fn set_nav_mode(p: &Player, nav: Option<crate::nav::NavKind>, subs_on: bool) {
             p.set("demuxer-readahead-secs", "0.3");
             p.set("video-latency-hacks", "yes");
             p.set("sid", "no"); // menus and subtitles are drawn by PlayCraft
+            // Never pause to "buffer": a disc menu can sit on a still picture with no sound.
+            p.set("cache-pause", "no");
+            p.set("video-sync", "audio");
         }
         None => {
             p.set("demuxer-lavf-format", "");
@@ -1336,6 +1384,8 @@ fn set_nav_mode(p: &Player, nav: Option<crate::nav::NavKind>, subs_on: bool) {
             p.set("cache", "auto");
             p.set("demuxer-readahead-secs", "1");
             p.set("video-latency-hacks", "no");
+            p.set("cache-pause", "yes");
+            p.set("video-sync", "audio");
             p.set("sid", if subs_on { "auto" } else { "no" });
         }
     }
@@ -1393,7 +1443,8 @@ pub fn setup_library_paths() {
 /// `playcraft --check-disc <drive>`: report what the engine and the disc navigator can read
 /// from a disc. Returns the exit code (0 when the disc plays one way or another).
 pub fn check_disc(device: &str) -> i32 {
-    let device = discs::device_root_pub(device);
+    let is_image = Path::new(device).is_file();
+    let device = if is_image { device.to_string() } else { discs::device_root_pub(device) };
     println!("Checking disc at {device}");
     let engine = match Engine::locate() {
         Ok(e) => e,
@@ -1403,10 +1454,12 @@ pub fn check_disc(device: &str) -> i32 {
         }
     };
     println!("OK      playback engine: {}", engine.path);
-    let kind = discs::classify_folder(Path::new(&device));
+    let kind = if is_image { iso_kind(Path::new(&device)) } else { discs::classify_folder(Path::new(&device)) };
     println!("INFO    disc kind: {kind:?}");
+    // What the player itself would use for this disc (a drive letter stays "E:" for DVDs).
+    let device = if is_image { device } else if matches!(kind, DiscKind::DvdVideo) { device.trim_end_matches(['\\', '/']).to_string() } else { device };
     let ctx = egui::Context::default();
-    let p = match Player::new(&engine, &ctx, &[("ao", "null".into()), ("vid", "no".into())]) {
+    let mut p = match Player::new(&engine, &ctx, &[("ao", "null".into()), ("vid", "no".into())]) {
         Ok(p) => p,
         Err(e) => {
             println!("FAILED  engine start: {e}");
@@ -1424,6 +1477,12 @@ pub fn check_disc(device: &str) -> i32 {
         _ => None,
     };
     let mut ok = false;
+    if nav_kind == Some(crate::nav::NavKind::Dvd) {
+        match crate::nav::trace_dvd(&device) {
+            Ok(t) => print!("TRACE   {t}"),
+            Err(e) => println!("FAILED  DVD trace: {e}"),
+        }
+    }
     if let Some(nk) = nav_kind {
         match crate::nav::NavSession::open(nk, &device, "en") {
             Ok(s) => {
@@ -1446,6 +1505,70 @@ pub fn check_disc(device: &str) -> i32 {
                 println!("{}  menu navigator read {} KB{}", if total > 0 { "OK     " } else { "FAILED " }, total / 1024, if why.is_empty() { String::new() } else { format!(" ({why})") });
             }
             Err(e) => println!("FAILED  menu navigator: {e}"),
+        }
+    }
+    // Play the disc's menus through the engine for a while and report the picture clock.
+    if let (Some(nk), true) = (nav_kind, std::env::var_os("PLAYCRAFT_TRACE_MENU").is_some()) {
+        if let Ok(s) = crate::nav::NavSession::open(nk, &device, "en") {
+            crate::nav::set_current(Some(s.clone()));
+            set_nav_mode(&p, Some(nk), false);
+            p.set("vid", "auto");
+            if std::env::var_os("PLAYCRAFT_TRACE_NOAUDIO").is_some() {
+                p.set("aid", "no");
+            }
+            if let Ok(v) = std::env::var("PLAYCRAFT_TRACE_SET") {
+                for kv in v.split(';') {
+                    if let Some((k, val)) = kv.split_once('=') {
+                        p.set(k, val);
+                    }
+                }
+            }
+            let _ = p.command(&["loadfile", "discnav://disc", "replace"]);
+            let start = Instant::now();
+            let mut was_still = false;
+            let mut next = 0u64;
+            while start.elapsed() < Duration::from_secs(40) {
+                for ev in p.poll_events() {
+                    if let PlayerEvent::Log(l) = ev {
+                        println!("        {l}");
+                    }
+                }
+                let still = s.shared.still.load(Ordering::Acquire);
+                if still != was_still {
+                    was_still = still;
+                    if std::env::var_os("PLAYCRAFT_TRACE_NODESYNC").is_none() {
+                        p.set("video-sync", if still { "desync" } else { "audio" });
+                    }
+                    println!("        still={still}");
+                }
+                if start.elapsed().as_secs() >= next {
+                    next += 2;
+                    println!(
+                        "MENU    t={:>2}s time-pos={:?} video-pts={:?} frames={:?} drops={:?}/{:?} paused-for-cache={:?} in_menu={}",
+                        start.elapsed().as_secs(),
+                        p.get_f64("time-pos"),
+                        p.get_f64("video-pts"),
+                        p.get_i64("estimated-frame-number"),
+                        p.get_i64("frame-drop-count"),
+                        p.get_i64("decoder-frame-drop-count"),
+                        p.get_flag("paused-for-cache"),
+                        s.shared.in_menu.load(Ordering::Acquire)
+                    );
+                }
+                let _ = p.render(640, 360, false);
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            if let Some(path) = std::env::var_os("PLAYCRAFT_TRACE_FRAME") {
+                if let Some(img) = p.render(640, 360, true) {
+                    let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
+                    let _ = image::save_buffer(&path, &rgba, img.size[0] as u32, img.size[1] as u32, image::ExtendedColorType::Rgba8);
+                    println!("        saved the last picture");
+                }
+            }
+            let _ = p.command(&["stop"]);
+            p.set("vid", "no");
+            crate::nav::set_current(None);
+            set_nav_mode(&p, None, false);
         }
     }
     for item in disc_play_candidates(kind, &device) {
